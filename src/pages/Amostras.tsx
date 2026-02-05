@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,60 +28,86 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Barcode, Calendar } from "lucide-react";
+import { TipoProcessamento, Amostra, ETAPAS_INTERNAS, ETAPAS_EXTERNAS } from "@/types";
 
-interface Amostra {
-  id: string;
-  codigo: string;
-  cliente: string;
-  tipo: string;
-  dataEntrada: string;
-  status: "pendente" | "em_analise" | "concluido";
-}
-
-const amostrasIniciais: Amostra[] = [
-  { id: "1", codigo: "AM-2024-001", cliente: "Cliente A", tipo: "Água", dataEntrada: "2024-01-15", status: "em_analise" },
-  { id: "2", codigo: "AM-2024-002", cliente: "Cliente B", tipo: "Solo", dataEntrada: "2024-01-14", status: "pendente" },
-  { id: "3", codigo: "AM-2024-003", cliente: "Cliente C", tipo: "Alimento", dataEntrada: "2024-01-13", status: "concluido" },
+// Mock de testes disponíveis (na vida real viria do banco de dados)
+const TESTES_DISPONIVEIS = [
+  { id: "1", nome: "Sexagem Fetal", tipo: "INTERNO", prazo: 120 },
+  { id: "2", nome: "NIPT Básico", tipo: "EXTERNO", prazo: 240 },
+  { id: "3", nome: "Paternidade Duo", tipo: "INTERNO", prazo: 72 },
 ];
 
-const statusLabels = {
-  pendente: { label: "Pendente", variant: "secondary" as const },
-  em_analise: { label: "Em Análise", variant: "default" as const },
-  concluido: { label: "Concluído", variant: "outline" as const },
-};
-
 export default function Amostras() {
-  const [amostras, setAmostras] = useState<Amostra[]>(amostrasIniciais);
+  // Estado inicial simulando dados, usando a interface correta de @/types
+  const [amostras, setAmostras] = useState<Amostra[]>([
+    { 
+      id: "1", 
+      codigoInterno: "AM-2024-001", 
+      paciente: "Maria Silva", 
+      testeSolicitado: "Sexagem Fetal", 
+      tipo: "INTERNO", 
+      dataEntrada: "2024-02-01", 
+      etapaAtual: 2,
+      historico: [] 
+    },
+    { 
+      id: "2", 
+      codigoInterno: "AM-2024-002", 
+      paciente: "João Santos", 
+      testeSolicitado: "NIPT Básico", 
+      tipo: "EXTERNO", 
+      dataEntrada: "2024-02-02", 
+      etapaAtual: 1,
+      historico: [] 
+    },
+  ]);
+
   const [busca, setBusca] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  
+  // Estado do formulário
   const [novaAmostra, setNovaAmostra] = useState({
-    codigo: "",
-    cliente: "",
-    tipo: "",
+    codigoInterno: "",
+    paciente: "",
+    testeId: "",
   });
 
   const amostrasFiltradas = amostras.filter(
     (a) =>
-      a.codigo.toLowerCase().includes(busca.toLowerCase()) ||
-      a.cliente.toLowerCase().includes(busca.toLowerCase())
+      a.codigoInterno.toLowerCase().includes(busca.toLowerCase()) ||
+      a.paciente.toLowerCase().includes(busca.toLowerCase())
   );
 
   const handleAdicionar = () => {
-    if (!novaAmostra.codigo || !novaAmostra.cliente || !novaAmostra.tipo) return;
+    if (!novaAmostra.codigoInterno || !novaAmostra.paciente || !novaAmostra.testeId) return;
     
+    // Encontra o teste selecionado para pegar o Tipo automaticamente
+    const testeSelecionado = TESTES_DISPONIVEIS.find(t => t.id === novaAmostra.testeId);
+    if (!testeSelecionado) return;
+
     const nova: Amostra = {
       id: String(amostras.length + 1),
-      codigo: novaAmostra.codigo,
-      cliente: novaAmostra.cliente,
-      tipo: novaAmostra.tipo,
+      codigoInterno: novaAmostra.codigoInterno,
+      paciente: novaAmostra.paciente,
+      testeSolicitado: testeSelecionado.nome,
+      tipo: testeSelecionado.tipo as TipoProcessamento, // Define automaticamente se é Interno/Externo
       dataEntrada: new Date().toISOString().split("T")[0],
-      status: "pendente",
+      etapaAtual: 0, // Começa na primeira etapa
+      historico: []
     };
     
     setAmostras([nova, ...amostras]);
-    setNovaAmostra({ codigo: "", cliente: "", tipo: "" });
+    setNovaAmostra({ codigoInterno: "", paciente: "", testeId: "" });
     setDialogOpen(false);
+  };
+
+  // Função auxiliar para pegar o nome da etapa atual
+  const getNomeEtapa = (amostra: Amostra) => {
+    const etapas = amostra.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
+    // Garante que o índice está dentro dos limites
+    const etapa = etapas[amostra.etapaAtual] || etapas[etapas.length - 1];
+    return etapa.nome;
   };
 
   return (
@@ -90,7 +116,7 @@ export default function Amostras() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Amostras</h1>
           <p className="text-muted-foreground">
-            Gerenciamento de amostras do laboratório
+            Cadastro e entrada de novas amostras
           </p>
         </div>
         
@@ -103,45 +129,50 @@ export default function Amostras() {
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Cadastrar Nova Amostra</DialogTitle>
+              <DialogTitle>Cadastro de Amostra</DialogTitle>
               <DialogDescription>
-                Preencha os dados da nova amostra
+                Insira os dados da amostra recebida.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
-              <div className="grid gap-2">
-                <Label htmlFor="codigo">Código</Label>
+              <div className="space-y-2">
+                <Label htmlFor="codigo" className="flex items-center gap-2">
+                  <Barcode className="h-4 w-4" /> Código Interno
+                </Label>
                 <Input
                   id="codigo"
-                  placeholder="AM-2024-XXX"
-                  value={novaAmostra.codigo}
-                  onChange={(e) => setNovaAmostra({ ...novaAmostra, codigo: e.target.value })}
+                  placeholder="Escaneie ou digite o código de barras"
+                  value={novaAmostra.codigoInterno}
+                  onChange={(e) => setNovaAmostra({ ...novaAmostra, codigoInterno: e.target.value })}
+                  autoFocus
                 />
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="cliente">Cliente</Label>
+              
+              <div className="space-y-2">
+                <Label htmlFor="paciente">Paciente / Cliente</Label>
                 <Input
-                  id="cliente"
-                  placeholder="Nome do cliente"
-                  value={novaAmostra.cliente}
-                  onChange={(e) => setNovaAmostra({ ...novaAmostra, cliente: e.target.value })}
+                  id="paciente"
+                  placeholder="Nome do paciente"
+                  value={novaAmostra.paciente}
+                  onChange={(e) => setNovaAmostra({ ...novaAmostra, paciente: e.target.value })}
                 />
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="tipo">Tipo de Amostra</Label>
+
+              <div className="space-y-2">
+                <Label htmlFor="teste">Teste a ser realizado</Label>
                 <Select 
-                  value={novaAmostra.tipo}
-                  onValueChange={(value) => setNovaAmostra({ ...novaAmostra, tipo: value })}
+                  value={novaAmostra.testeId}
+                  onValueChange={(value) => setNovaAmostra({ ...novaAmostra, testeId: value })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Selecione o tipo" />
+                    <SelectValue placeholder="Selecione o teste..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Água">Água</SelectItem>
-                    <SelectItem value="Solo">Solo</SelectItem>
-                    <SelectItem value="Alimento">Alimento</SelectItem>
-                    <SelectItem value="Ar">Ar</SelectItem>
-                    <SelectItem value="Outro">Outro</SelectItem>
+                    {TESTES_DISPONIVEIS.map((teste) => (
+                      <SelectItem key={teste.id} value={teste.id}>
+                        {teste.nome} ({teste.tipo})
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -150,7 +181,7 @@ export default function Amostras() {
               <Button variant="outline" onClick={() => setDialogOpen(false)}>
                 Cancelar
               </Button>
-              <Button onClick={handleAdicionar}>Cadastrar</Button>
+              <Button onClick={handleAdicionar}>Cadastrar Amostra</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -162,7 +193,7 @@ export default function Amostras() {
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar por código ou cliente..."
+                placeholder="Buscar por código ou paciente..."
                 className="pl-9"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
@@ -174,23 +205,35 @@ export default function Amostras() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Código</TableHead>
-                <TableHead>Cliente</TableHead>
+                <TableHead>Código Interno</TableHead>
+                <TableHead>Paciente</TableHead>
+                <TableHead>Teste</TableHead>
                 <TableHead>Tipo</TableHead>
-                <TableHead>Data de Entrada</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead>Data Entrada</TableHead>
+                <TableHead>Status Atual</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {amostrasFiltradas.map((amostra) => (
                 <TableRow key={amostra.id}>
-                  <TableCell className="font-medium">{amostra.codigo}</TableCell>
-                  <TableCell>{amostra.cliente}</TableCell>
-                  <TableCell>{amostra.tipo}</TableCell>
-                  <TableCell>{amostra.dataEntrada}</TableCell>
+                  <TableCell className="font-medium font-mono">{amostra.codigoInterno}</TableCell>
+                  <TableCell>{amostra.paciente}</TableCell>
+                  <TableCell>{amostra.testeSolicitado}</TableCell>
                   <TableCell>
-                    <Badge variant={statusLabels[amostra.status].variant}>
-                      {statusLabels[amostra.status].label}
+                    <Badge variant={amostra.tipo === "INTERNO" ? "secondary" : "outline"}>
+                      {amostra.tipo}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <Calendar className="h-3 w-3 text-muted-foreground" />
+                      {amostra.dataEntrada}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {/* Badge dinâmico mostrando o nome da etapa atual */}
+                    <Badge variant="default" className="bg-blue-600 hover:bg-blue-700">
+                      {getNomeEtapa(amostra)}
                     </Badge>
                   </TableCell>
                 </TableRow>
