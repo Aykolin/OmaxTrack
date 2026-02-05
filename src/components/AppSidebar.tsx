@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { 
   LayoutDashboard, 
   FlaskConical, 
@@ -6,10 +5,11 @@ import {
   Cog, 
   FileText,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  LogOut // Ícone de sair
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
 import {
@@ -22,9 +22,11 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarHeader,
+  SidebarFooter, // Importante
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 const menuItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -38,10 +40,18 @@ export function AppSidebar() {
   const { state, toggleSidebar } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
+  const navigate = useNavigate();
 
   const isActive = (path: string) => {
     if (path === "/") return location.pathname === "/";
     return location.pathname.startsWith(path);
+  };
+
+  // Função de Logout
+  const handleLogout = () => {
+    localStorage.removeItem("omax_auth"); // Remove a "sessão"
+    toast.success("Sessão terminada");
+    navigate("/login");
   };
 
   return (
@@ -50,7 +60,7 @@ export function AppSidebar() {
         {!collapsed && (
           <div className="flex items-center gap-2">
             <FlaskConical className="h-6 w-6 text-primary" />
-            <span className="font-semibold text-lg">OmaxTrack</span>
+            <span className="font-semibold text-lg">OmaxLab</span>
           </div>
         )}
         <Button
@@ -98,6 +108,22 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+
+      {/* Rodapé com botão de Sair */}
+      <SidebarFooter className="p-4 border-t border-sidebar-border">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              onClick={handleLogout}
+              tooltip={collapsed ? "Sair" : undefined}
+              className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20"
+            >
+              <LogOut className="h-5 w-5 shrink-0" />
+              {!collapsed && <span>Sair</span>}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
     </Sidebar>
   );
 }
