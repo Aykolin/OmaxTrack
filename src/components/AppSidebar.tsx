@@ -6,7 +6,7 @@ import {
   FileText,
   ChevronLeft,
   ChevronRight,
-  LogOut // Ícone de sair
+  LogOut 
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -22,11 +22,12 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarHeader,
-  SidebarFooter, // Importante
+  SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext"; // Importa o contexto
 
 const menuItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -41,17 +42,22 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const location = useLocation();
   const navigate = useNavigate();
+  const { signOut } = useAuth(); // Usa a função de logout do contexto
 
   const isActive = (path: string) => {
     if (path === "/") return location.pathname === "/";
     return location.pathname.startsWith(path);
   };
 
-  // Função de Logout
-  const handleLogout = () => {
-    localStorage.removeItem("omax_auth"); // Remove a "sessão"
-    toast.success("Sessão terminada");
-    navigate("/login");
+  const handleLogout = async () => {
+    try {
+      await signOut(); // Chama o logout do Supabase
+      toast.success("Sessão terminada");
+      navigate("/login");
+    } catch (error) {
+      console.error("Erro ao sair:", error);
+      toast.error("Erro ao terminar sessão");
+    }
   };
 
   return (
@@ -109,7 +115,6 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      {/* Rodapé com botão de Sair */}
       <SidebarFooter className="p-4 border-t border-sidebar-border">
         <SidebarMenu>
           <SidebarMenuItem>
