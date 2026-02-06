@@ -66,7 +66,7 @@ export function AppSidebar() {
         {!collapsed && (
           <div className="flex items-center gap-2">
             <FlaskConical className="h-6 w-6 text-primary" />
-            <span className="font-semibold text-lg">OmaxLab</span>
+            <span className="font-semibold text-lg">OmaxLabTrack</span>
           </div>
         )}
         <Button
