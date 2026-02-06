@@ -1,155 +1,245 @@
-import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { 
+  ArrowRight, 
+  CheckCircle2, 
+  AlertTriangle, 
+  Play, 
+  Box, 
+  TestTube2, 
+  FileText, 
+  UserCheck, 
+  ChevronDown,
+  RotateCcw,
+  FastForward
+} from "lucide-react";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { CheckCircle2, Circle, Clock, ArrowRight } from "lucide-react";
-
-interface Etapa {
-  id: string;
-  nome: string;
-  status: "pendente" | "em_andamento" | "concluida";
-  responsavel?: string;
-  dataInicio?: string;
-  dataFim?: string;
-}
-
-interface Processamento {
-  id: string;
-  amostra: string;
-  etapas: Etapa[];
-  progresso: number;
-}
-
-const processamentosIniciais: Processamento[] = [
-  {
-    id: "1",
-    amostra: "AM-2024-001",
-    progresso: 60,
-    etapas: [
-      { id: "1", nome: "Recepção", status: "concluida", responsavel: "João", dataInicio: "2024-01-15", dataFim: "2024-01-15" },
-      { id: "2", nome: "Preparação", status: "concluida", responsavel: "Maria", dataInicio: "2024-01-15", dataFim: "2024-01-16" },
-      { id: "3", nome: "Análise", status: "em_andamento", responsavel: "Pedro", dataInicio: "2024-01-16" },
-      { id: "4", nome: "Validação", status: "pendente" },
-      { id: "5", nome: "Liberação", status: "pendente" },
-    ],
-  },
-  {
-    id: "2",
-    amostra: "AM-2024-002",
-    progresso: 20,
-    etapas: [
-      { id: "1", nome: "Recepção", status: "concluida", responsavel: "Ana", dataInicio: "2024-01-14", dataFim: "2024-01-14" },
-      { id: "2", nome: "Preparação", status: "em_andamento", responsavel: "Carlos", dataInicio: "2024-01-15" },
-      { id: "3", nome: "Análise", status: "pendente" },
-      { id: "4", nome: "Validação", status: "pendente" },
-      { id: "5", nome: "Liberação", status: "pendente" },
-    ],
-  },
-];
-
-const StatusIcon = ({ status }: { status: Etapa["status"] }) => {
-  switch (status) {
-    case "concluida":
-      return <CheckCircle2 className="h-5 w-5 text-green-600" />;
-    case "em_andamento":
-      return <Clock className="h-5 w-5 text-blue-600 animate-pulse" />;
-    default:
-      return <Circle className="h-5 w-5 text-muted-foreground" />;
-  }
-};
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { supabase } from "@/lib/supabase";
+import { toast } from "sonner";
+import { Amostra, ETAPAS_INTERNAS, ETAPAS_EXTERNAS, TipoProcessamento } from "@/types";
+import { differenceInHours, parseISO } from "date-fns";
 
 export default function Processamento() {
-  const [processamentos] = useState<Processamento[]>(processamentosIniciais);
-  const [filtroAmostra, setFiltroAmostra] = useState<string>("todas");
+  const [amostras, setAmostras] = useState<Amostra[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [processando, setProcessando] = useState<string | null>(null);
 
-  const processamentosFiltrados = filtroAmostra === "todas"
-    ? processamentos
-    : processamentos.filter(p => p.amostra === filtroAmostra);
+  useEffect(() => {
+    fetchAmostrasEmAndamento();
+    
+    const canal = supabase
+      .channel('mudancas-amostras')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'amostras' }, () => {
+        fetchAmostrasEmAndamento();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(canal);
+    };
+  }, []);
+
+  async function fetchAmostrasEmAndamento() {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('amostras')
+        .select(`*, testes ( nome )`)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      const formatadas: Amostra[] = (data || []).map((a: any) => ({
+        id: a.id,
+        codigoInterno: a.codigo_interno,
+        paciente: a.paciente,
+        testeSolicitado: a.testes?.nome || "N/A",
+        tipo: a.tipo as TipoProcessamento,
+        dataEntrada: a.data_entrada,
+        etapaAtual: a.etapa_atual,
+        historico: []
+      }));
+
+      // Filtra visualmente as concluídas se necessário, ou mostra todas
+      // Aqui mostramos todas que não estão na última etapa absoluta
+      const emAndamento = formatadas.filter(a => {
+        const totalEtapas = a.tipo === 'INTERNO' ? ETAPAS_INTERNAS.length : ETAPAS_EXTERNAS.length;
+        return a.etapaAtual < totalEtapas - 1; 
+      });
+
+      setAmostras(emAndamento);
+    } catch (error: any) {
+      toast.error("Erro ao carregar fila: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Função Genérica para Mudar Etapa (Avançar ou Voltar)
+  const handleMudarEtapa = async (amostra: Amostra, novaEtapaIndex: number) => {
+    const etapas = amostra.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
+    
+    if (novaEtapaIndex < 0 || novaEtapaIndex >= etapas.length) return;
+
+    try {
+      setProcessando(amostra.id);
+      
+      const { error } = await supabase
+        .from('amostras')
+        .update({ etapa_atual: novaEtapaIndex })
+        .eq('id', amostra.id);
+
+      if (error) throw error;
+
+      const acao = novaEtapaIndex > amostra.etapaAtual ? "avançou" : "voltou";
+      toast.success(`Amostra ${amostra.codigoInterno} ${acao} para: ${etapas[novaEtapaIndex].nome}`);
+      
+      fetchAmostrasEmAndamento();
+
+    } catch (error: any) {
+      toast.error("Erro ao alterar etapa: " + error.message);
+    } finally {
+      setProcessando(null);
+    }
+  };
+
+  const internos = amostras.filter(a => a.tipo === 'INTERNO');
+  const externos = amostras.filter(a => a.tipo === 'EXTERNO');
+
+  const CardAmostraProcessamento = ({ item }: { item: Amostra }) => {
+    const etapas = item.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
+    const etapaAtualInfo = etapas[item.etapaAtual];
+    
+    // Cálculo de atraso
+    const horasDesdeEntrada = differenceInHours(new Date(), parseISO(item.dataEntrada));
+    const estaAtrasado = etapaAtualInfo.prazoHoras > 0 && horasDesdeEntrada > etapaAtualInfo.prazoHoras;
+
+    return (
+      <Card className={`mb-4 border-l-4 ${estaAtrasado ? 'border-l-red-500' : 'border-l-blue-500'}`}>
+        <CardContent className="p-4 flex items-center justify-between">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-lg">{item.codigoInterno}</span>
+              <Badge variant="outline">{item.testeSolicitado}</Badge>
+              {estaAtrasado && (
+                <Badge variant="destructive" className="flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" /> Atraso
+                </Badge>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Paciente: <span className="font-medium text-foreground">{item.paciente}</span>
+            </p>
+            <div className="flex items-center gap-2 text-sm mt-2">
+              <Badge variant="secondary" className="px-2 py-1 bg-primary/10 text-primary hover:bg-primary/20">
+                {etapaAtualInfo.nome}
+              </Badge>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Botão Principal: Avançar 1 Etapa */}
+            <Button 
+              onClick={() => handleMudarEtapa(item, item.etapaAtual + 1)} 
+              disabled={!!processando}
+              className={processando === item.id ? "opacity-50 cursor-not-allowed" : ""}
+            >
+              {processando === item.id ? "Salvando..." : "Próxima Etapa"}
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+
+            {/* Menu Dropdown: Controle Fino (Voltar/Saltar) */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Mover para Etapa:</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                
+                {etapas.map((etapa, index) => (
+                  <DropdownMenuItem 
+                    key={etapa.id}
+                    onClick={() => handleMudarEtapa(item, index)}
+                    disabled={index === item.etapaAtual}
+                    className="flex justify-between items-center cursor-pointer"
+                  >
+                    <span className={index === item.etapaAtual ? "font-bold text-primary" : ""}>
+                      {index + 1}. {etapa.nome}
+                    </span>
+                    {index < item.etapaAtual && <RotateCcw className="h-3 w-3 text-orange-500" />}
+                    {index > item.etapaAtual && <FastForward className="h-3 w-3 text-green-500" />}
+                    {index === item.etapaAtual && <CheckCircle2 className="h-3 w-3 text-primary" />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Processamento</h1>
-        <p className="text-muted-foreground">
-          Acompanhamento das etapas de processamento
-        </p>
+    <div className="space-y-6 h-[calc(100vh-100px)] flex flex-col">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Fila de Processamento</h1>
+          <p className="text-muted-foreground">
+            Gestão operacional e avanço de etapas das amostras.
+          </p>
+        </div>
       </div>
 
-      <div className="flex items-center gap-4">
-        <Select value={filtroAmostra} onValueChange={setFiltroAmostra}>
-          <SelectTrigger className="w-[200px]">
-            <SelectValue placeholder="Filtrar por amostra" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todas">Todas as amostras</SelectItem>
-            {processamentos.map(p => (
-              <SelectItem key={p.id} value={p.amostra}>{p.amostra}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <Tabs defaultValue="internos" className="flex-1 overflow-hidden flex flex-col">
+        <TabsList>
+          <TabsTrigger value="internos">Internos ({internos.length})</TabsTrigger>
+          <TabsTrigger value="externos">Externos ({externos.length})</TabsTrigger>
+        </TabsList>
 
-      <div className="space-y-4">
-        {processamentosFiltrados.map((proc) => (
-          <Card key={proc.id}>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-lg">{proc.amostra}</CardTitle>
-                  <CardDescription>
-                    {proc.etapas.filter(e => e.status === "concluida").length} de {proc.etapas.length} etapas concluídas
-                  </CardDescription>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <span className="text-2xl font-bold">{proc.progresso}%</span>
-                    <p className="text-xs text-muted-foreground">Progresso</p>
-                  </div>
-                </div>
+        <TabsContent value="internos" className="flex-1 overflow-hidden mt-4">
+          <ScrollArea className="h-full pr-4">
+            {internos.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
+                <CheckCircle2 className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                <p>Nenhuma amostra interna pendente.</p>
               </div>
-              <Progress value={proc.progresso} className="mt-2" />
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center gap-2 overflow-x-auto pb-2">
-                {proc.etapas.map((etapa, index) => (
-                  <div key={etapa.id} className="flex items-center">
-                    <div className={`
-                      flex flex-col items-center p-3 rounded-lg border min-w-[120px]
-                      ${etapa.status === "em_andamento" ? "border-blue-500 bg-blue-50" : ""}
-                      ${etapa.status === "concluida" ? "border-green-500 bg-green-50" : ""}
-                      ${etapa.status === "pendente" ? "border-border bg-muted/30" : ""}
-                    `}>
-                      <StatusIcon status={etapa.status} />
-                      <span className="text-sm font-medium mt-2">{etapa.nome}</span>
-                      {etapa.responsavel && (
-                        <span className="text-xs text-muted-foreground mt-1">
-                          {etapa.responsavel}
-                        </span>
-                      )}
-                      {etapa.status === "em_andamento" && (
-                        <Badge variant="default" className="mt-2 text-xs">
-                          Em andamento
-                        </Badge>
-                      )}
-                    </div>
-                    {index < proc.etapas.length - 1 && (
-                      <ArrowRight className="h-4 w-4 mx-2 text-muted-foreground shrink-0" />
-                    )}
-                  </div>
-                ))}
+            ) : (
+              internos.map(amostra => (
+                <CardAmostraProcessamento key={amostra.id} item={amostra} />
+              ))
+            )}
+          </ScrollArea>
+        </TabsContent>
+
+        <TabsContent value="externos" className="flex-1 overflow-hidden mt-4">
+          <ScrollArea className="h-full pr-4">
+            {externos.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
+                <CheckCircle2 className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                <p>Nenhuma amostra externa pendente.</p>
               </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+            ) : (
+              externos.map(amostra => (
+                <CardAmostraProcessamento key={amostra.id} item={amostra} />
+              ))
+            )}
+          </ScrollArea>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
