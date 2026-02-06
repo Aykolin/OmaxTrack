@@ -28,46 +28,52 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Play, CheckCircle, Clock, Trash2, CalendarClock } from "lucide-react";
 
 interface Teste {
   id: string;
   codigo: string;
+  nome: string; // Novo campo 
   amostra: string;
   tipo: "interno" | "externo";
   metodo: string;
+  prazo: string; // Novo campo 
   status: "pendente" | "em_execucao" | "concluido";
   resultado?: string;
 }
 
-const testesIniciais: Teste[] = [
-  { id: "1", codigo: "T-001", amostra: "AM-2024-001", tipo: "interno", metodo: "Cromatografia", status: "em_execucao" },
-  { id: "2", codigo: "T-002", amostra: "AM-2024-001", tipo: "externo", metodo: "Espectrometria", status: "pendente" },
-  { id: "3", codigo: "T-003", amostra: "AM-2024-002", tipo: "interno", metodo: "Microbiologia", status: "concluido", resultado: "Aprovado" },
-  { id: "4", codigo: "T-004", amostra: "AM-2024-003", tipo: "interno", metodo: "pH", status: "concluido", resultado: "7.2" },
-];
-
 const statusLabels = {
-  pendente: { label: "Pendente", variant: "secondary" as const },
-  em_execucao: { label: "Em Execução", variant: "default" as const },
-  concluido: { label: "Concluído", variant: "outline" as const },
+  pendente: { label: "Pendente", variant: "secondary" as const, icon: Clock },
+  em_execucao: { label: "Em Execução", variant: "default" as const, icon: Play },
+  concluido: { label: "Concluído", variant: "outline" as const, icon: CheckCircle },
 };
 
 export default function Testes() {
-  const [testes, setTestes] = useState<Teste[]>(testesIniciais);
+  const [testes, setTestes] = useState<Teste[]>([]);
   const [busca, setBusca] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  
+  // Estado do formulário atualizado com os novos campos
   const [novoTeste, setNovoTeste] = useState({
     codigo: "",
+    nome: "",
     amostra: "",
     tipo: "" as "interno" | "externo",
     metodo: "",
+    prazo: "",
   });
 
   const testesFiltrados = testes.filter(
     (t) =>
       t.codigo.toLowerCase().includes(busca.toLowerCase()) ||
+      t.nome.toLowerCase().includes(busca.toLowerCase()) ||
       t.amostra.toLowerCase().includes(busca.toLowerCase())
   );
 
@@ -75,47 +81,113 @@ export default function Testes() {
   const testesExternos = testesFiltrados.filter(t => t.tipo === "externo");
 
   const handleAdicionar = () => {
-    if (!novoTeste.codigo || !novoTeste.amostra || !novoTeste.tipo || !novoTeste.metodo) return;
+    // Validação inclui os novos campos
+    if (!novoTeste.codigo || !novoTeste.nome || !novoTeste.amostra || !novoTeste.tipo || !novoTeste.prazo) return;
     
     const novo: Teste = {
       id: String(testes.length + 1),
       codigo: novoTeste.codigo,
+      nome: novoTeste.nome,
       amostra: novoTeste.amostra,
       tipo: novoTeste.tipo,
-      metodo: novoTeste.metodo,
+      metodo: novoTeste.metodo || "-",
+      prazo: novoTeste.prazo,
       status: "pendente",
     };
     
     setTestes([novo, ...testes]);
-    setNovoTeste({ codigo: "", amostra: "", tipo: "" as "interno" | "externo", metodo: "" });
+    setNovoTeste({ codigo: "", nome: "", amostra: "", tipo: "" as "interno" | "externo", metodo: "", prazo: "" });
     setDialogOpen(false);
+  };
+
+  const handleExcluir = (id: string) => {
+    setTestes(testes.filter(t => t.id !== id));
+  };
+
+  const handleStatusChange = (id: string, novoStatus: Teste["status"]) => {
+    setTestes(testes.map(t => 
+      t.id === id ? { ...t, status: novoStatus } : t
+    ));
   };
 
   const TesteTable = ({ data }: { data: Teste[] }) => (
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Código</TableHead>
+          <TableHead>Teste</TableHead>
           <TableHead>Amostra</TableHead>
           <TableHead>Método</TableHead>
+          <TableHead>Prazo</TableHead>
           <TableHead>Status</TableHead>
-          <TableHead>Resultado</TableHead>
+          <TableHead className="text-right">Ações</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {data.map((teste) => (
-          <TableRow key={teste.id}>
-            <TableCell className="font-medium">{teste.codigo}</TableCell>
-            <TableCell>{teste.amostra}</TableCell>
-            <TableCell>{teste.metodo}</TableCell>
-            <TableCell>
-              <Badge variant={statusLabels[teste.status].variant}>
-                {statusLabels[teste.status].label}
-              </Badge>
+        {data.length === 0 ? (
+          <TableRow>
+            <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+              Nenhum teste encontrado.
             </TableCell>
-            <TableCell>{teste.resultado || "-"}</TableCell>
           </TableRow>
-        ))}
+        ) : (
+          data.map((teste) => (
+            <TableRow key={teste.id}>
+              <TableCell>
+                <div className="flex flex-col">
+                  <span className="font-medium">{teste.nome}</span>
+                  <span className="text-xs text-muted-foreground">{teste.codigo}</span>
+                </div>
+              </TableCell>
+              <TableCell>{teste.amostra}</TableCell>
+              <TableCell>{teste.metodo}</TableCell>
+              <TableCell>
+                <div className="flex items-center gap-1 text-muted-foreground text-sm">
+                  <CalendarClock className="h-3 w-3" />
+                  {teste.prazo}
+                </div>
+              </TableCell>
+              <TableCell>
+                <Badge variant={statusLabels[teste.status].variant} className="gap-1">
+                  {statusLabels[teste.status].label}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-right">
+                <div className="flex items-center justify-end gap-2">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => handleStatusChange(teste.id, "pendente")}>
+                        <Clock className="mr-2 h-4 w-4" />
+                        Marcar como Pendente
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => handleStatusChange(teste.id, "em_execucao")}>
+                        <Play className="mr-2 h-4 w-4" />
+                        Iniciar Execução
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => handleStatusChange(teste.id, "concluido")}>
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                        Concluir Teste
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50"
+                    onClick={() => handleExcluir(teste.id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          ))
+        )}
       </TableBody>
     </Table>
   );
@@ -137,52 +209,77 @@ export default function Testes() {
               Novo Teste
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="sm:max-w-[500px]">
             <DialogHeader>
               <DialogTitle>Cadastrar Novo Teste</DialogTitle>
               <DialogDescription>
-                Preencha os dados do novo teste
+                Preencha os dados obrigatórios do teste conforme o documento.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
-              <div className="grid gap-2">
-                <Label htmlFor="codigo">Código do Teste</Label>
-                <Input
-                  id="codigo"
-                  placeholder="T-XXX"
-                  value={novoTeste.codigo}
-                  onChange={(e) => setNovoTeste({ ...novoTeste, codigo: e.target.value })}
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="codigo">Código Interno</Label>
+                  <Input
+                    id="codigo"
+                    placeholder="Ex: T-001"
+                    value={novoTeste.codigo}
+                    onChange={(e) => setNovoTeste({ ...novoTeste, codigo: e.target.value })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="nome">Nome do Teste</Label>
+                  <Input
+                    id="nome"
+                    placeholder="Ex: Sexagem Fetal"
+                    value={novoTeste.nome}
+                    onChange={(e) => setNovoTeste({ ...novoTeste, nome: e.target.value })}
+                  />
+                </div>
               </div>
+              
               <div className="grid gap-2">
-                <Label htmlFor="amostra">Amostra</Label>
+                <Label htmlFor="amostra">Amostra Vinculada</Label>
                 <Input
                   id="amostra"
-                  placeholder="AM-2024-XXX"
+                  placeholder="Código da Amostra (AM-...)"
                   value={novoTeste.amostra}
                   onChange={(e) => setNovoTeste({ ...novoTeste, amostra: e.target.value })}
                 />
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="tipo">Tipo de Teste</Label>
-                <Select 
-                  value={novoTeste.tipo}
-                  onValueChange={(value: "interno" | "externo") => setNovoTeste({ ...novoTeste, tipo: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione o tipo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="interno">Interno</SelectItem>
-                    <SelectItem value="externo">Externo</SelectItem>
-                  </SelectContent>
-                </Select>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="tipo">Processamento</Label>
+                  <Select 
+                    value={novoTeste.tipo}
+                    onValueChange={(value: "interno" | "externo") => setNovoTeste({ ...novoTeste, tipo: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="interno">Interno</SelectItem>
+                      <SelectItem value="externo">Externo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="prazo">Prazo Resultado</Label>
+                  <Input
+                    id="prazo"
+                    placeholder="Ex: 5 dias ou 48h"
+                    value={novoTeste.prazo}
+                    onChange={(e) => setNovoTeste({ ...novoTeste, prazo: e.target.value })}
+                  />
+                </div>
               </div>
+
               <div className="grid gap-2">
-                <Label htmlFor="metodo">Método</Label>
+                <Label htmlFor="metodo">Método (Opcional)</Label>
                 <Input
                   id="metodo"
-                  placeholder="Nome do método"
+                  placeholder="Ex: PCR, Sequenciamento..."
                   value={novoTeste.metodo}
                   onChange={(e) => setNovoTeste({ ...novoTeste, metodo: e.target.value })}
                 />
@@ -192,7 +289,7 @@ export default function Testes() {
               <Button variant="outline" onClick={() => setDialogOpen(false)}>
                 Cancelar
               </Button>
-              <Button onClick={handleAdicionar}>Cadastrar</Button>
+              <Button onClick={handleAdicionar}>Salvar Teste</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -204,7 +301,7 @@ export default function Testes() {
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar por código ou amostra..."
+                placeholder="Buscar por nome, código ou amostra..."
                 className="pl-9"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
