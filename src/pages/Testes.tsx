@@ -35,28 +35,27 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Search, MoreHorizontal, Play, CheckCircle, Clock, Trash2, CalendarClock, Loader2 } from "lucide-react";
-import { supabase } from "@/lib/supabase"; // Importante: Conexão com o banco
+import { Plus, Search, MoreHorizontal, CheckCircle, Trash2, CalendarClock, Loader2, Archive, Activity } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { TipoProcessamento } from "@/types";
 
-// Interface alinhada com o banco de dados
 interface Teste {
   id: string;
   codigo: string;
   nome: string;
-  amostra?: string; // Campo opcional no banco
+  amostra?: string;
   tipo: TipoProcessamento;
   metodo: string;
   prazo: string;
-  status: "pendente" | "em_execucao" | "concluido";
+  status: "ativo" | "inativo"; 
 }
 
 const statusLabels = {
-  pendente: { label: "Pendente", variant: "secondary" as const, icon: Clock },
-  em_execucao: { label: "Em Execução", variant: "default" as const, icon: Play },
-  concluido: { label: "Concluído", variant: "outline" as const, icon: CheckCircle },
-  ativo: { label: "Ativo", variant: "secondary" as const, icon: CheckCircle }, // Fallback para status antigo
+  ativo: { label: "Ativo", variant: "default" as const, icon: CheckCircle, className: "bg-green-600 hover:bg-green-700" },
+  inativo: { label: "Inativo", variant: "secondary" as const, icon: Archive, className: "text-muted-foreground" },
+  // Fallback para não quebrar com dados antigos
+  pendente: { label: "Pendente (Ativar)", variant: "outline" as const, icon: Activity, className: "text-yellow-600 border-yellow-600" },
 };
 
 export default function Testes() {
@@ -66,7 +65,6 @@ export default function Testes() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   
-  // Estado do formulário
   const [novoTeste, setNovoTeste] = useState({
     codigo: "",
     nome: "",
@@ -76,7 +74,6 @@ export default function Testes() {
     prazo: "",
   });
 
-  // 1. CARREGAR DO SUPABASE (O segredo para não sumir!)
   useEffect(() => {
     fetchTestes();
   }, []);
@@ -90,14 +87,7 @@ export default function Testes() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      
-      // Normalização simples dos dados vindos do banco
-      const dadosFormatados = (data || []).map(t => ({
-        ...t,
-        status: t.status === 'ativo' ? 'pendente' : t.status // Converte status legado se necessário
-      }));
-
-      setTestes(dadosFormatados);
+      setTestes(data || []);
     } catch (error: any) {
       toast.error("Erro ao carregar testes: " + error.message);
     } finally {
@@ -105,7 +95,6 @@ export default function Testes() {
     }
   }
 
-  // 2. SALVAR NO SUPABASE
   const handleAdicionar = async () => {
     if (!novoTeste.codigo || !novoTeste.nome || !novoTeste.tipo || !novoTeste.prazo) {
       toast.warning("Preencha os campos obrigatórios.");
@@ -124,7 +113,7 @@ export default function Testes() {
             tipo: novoTeste.tipo,
             metodo: novoTeste.metodo || "-",
             prazo: novoTeste.prazo,
-            status: 'pendente'
+            status: 'ativo' // <--- CORREÇÃO: Agora nasce ATIVO
           }
         ])
         .select();
@@ -132,8 +121,8 @@ export default function Testes() {
       if (error) throw error;
 
       if (data) {
-        setTestes([data[0], ...testes]); // Atualiza lista local
-        toast.success("Teste salvo no banco de dados!");
+        setTestes([data[0], ...testes]);
+        toast.success("Teste salvo e ativo!");
         setNovoTeste({ codigo: "", nome: "", amostra: "", tipo: "INTERNO", metodo: "", prazo: "" });
         setDialogOpen(false);
       }
@@ -144,14 +133,11 @@ export default function Testes() {
     }
   };
 
-  // 3. EXCLUIR NO SUPABASE
   const handleExcluir = async (id: string) => {
     if (!confirm("Tem certeza? Isso pode afetar amostras vinculadas.")) return;
-
     try {
       const { error } = await supabase.from('testes').delete().eq('id', id);
       if (error) throw error;
-
       setTestes(testes.filter(t => t.id !== id));
       toast.success("Teste excluído.");
     } catch (error: any) {
@@ -159,11 +145,12 @@ export default function Testes() {
     }
   };
 
-  // 4. ALTERAR STATUS NO SUPABASE
-  const handleStatusChange = async (id: string, novoStatus: Teste["status"]) => {
-    // Atualização Otimista (Muda na tela antes do banco responder para ser rápido)
+  // Função para ativar/inativar
+  const handleToggleStatus = async (id: string, statusAtual: string) => {
+    const novoStatus = statusAtual === 'ativo' ? 'inativo' : 'ativo';
+    
     const backup = [...testes];
-    setTestes(testes.map(t => t.id === id ? { ...t, status: novoStatus } : t));
+    setTestes(testes.map(t => t.id === id ? { ...t, status: novoStatus as any } : t));
 
     try {
       const { error } = await supabase
@@ -172,9 +159,9 @@ export default function Testes() {
         .eq('id', id);
 
       if (error) throw error;
-      toast.success("Status atualizado.");
+      toast.success(`Teste marcado como ${novoStatus}`);
     } catch (error: any) {
-      setTestes(backup); // Reverte se der erro
+      setTestes(backup);
       toast.error("Erro ao atualizar: " + error.message);
     }
   };
@@ -182,8 +169,7 @@ export default function Testes() {
   const testesFiltrados = testes.filter(
     (t) =>
       t.codigo.toLowerCase().includes(busca.toLowerCase()) ||
-      t.nome.toLowerCase().includes(busca.toLowerCase()) ||
-      (t.amostra && t.amostra.toLowerCase().includes(busca.toLowerCase()))
+      t.nome.toLowerCase().includes(busca.toLowerCase())
   );
 
   const testesInternos = testesFiltrados.filter(t => t.tipo === "INTERNO");
@@ -209,63 +195,71 @@ export default function Testes() {
             </TableCell>
           </TableRow>
         ) : (
-          data.map((teste) => (
-            <TableRow key={teste.id}>
-              <TableCell>
-                <div className="flex flex-col">
-                  <span className="font-medium">{teste.nome}</span>
-                  <span className="text-xs text-muted-foreground font-mono">{teste.codigo}</span>
-                </div>
-              </TableCell>
-              <TableCell>{teste.amostra || "-"}</TableCell>
-              <TableCell>{teste.metodo}</TableCell>
-              <TableCell>
-                <div className="flex items-center gap-1 text-muted-foreground text-sm">
-                  <CalendarClock className="h-3 w-3" />
-                  {teste.prazo}
-                </div>
-              </TableCell>
-              <TableCell>
-                <Badge variant={statusLabels[teste.status]?.variant || "secondary"} className="gap-1">
-                  {statusLabels[teste.status]?.label || teste.status}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-right">
-                <div className="flex items-center justify-end gap-2">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => handleStatusChange(teste.id, "pendente")}>
-                        <Clock className="mr-2 h-4 w-4" />
-                        Marcar como Pendente
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleStatusChange(teste.id, "em_execucao")}>
-                        <Play className="mr-2 h-4 w-4" />
-                        Iniciar Execução
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleStatusChange(teste.id, "concluido")}>
-                        <CheckCircle className="mr-2 h-4 w-4" />
-                        Concluir Teste
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+          data.map((teste) => {
+            // Tratamento para status antigos
+            const statusConfig = statusLabels[teste.status] || statusLabels.pendente;
+            const Icon = statusConfig.icon;
 
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50"
-                    onClick={() => handleExcluir(teste.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          ))
+            return (
+              <TableRow key={teste.id} className={teste.status === 'inativo' ? 'opacity-60 bg-muted/50' : ''}>
+                <TableCell>
+                  <div className="flex flex-col">
+                    <span className="font-medium">{teste.nome}</span>
+                    <span className="text-xs text-muted-foreground font-mono">{teste.codigo}</span>
+                  </div>
+                </TableCell>
+                <TableCell>{teste.amostra || "-"}</TableCell>
+                <TableCell>{teste.metodo}</TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1 text-muted-foreground text-sm">
+                    <CalendarClock className="h-3 w-3" />
+                    {teste.prazo}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge className={`gap-1 ${statusConfig.className}`} variant={statusConfig.variant}>
+                    <Icon className="h-3 w-3" />
+                    {statusConfig.label}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-right">
+                  <div className="flex items-center justify-end gap-2">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleToggleStatus(teste.id, teste.status)}>
+                          {teste.status === 'ativo' ? (
+                            <>
+                              <Archive className="mr-2 h-4 w-4" />
+                              Arquivar (Inativar)
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle className="mr-2 h-4 w-4" />
+                              Ativar Teste
+                            </>
+                          )}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50"
+                      onClick={() => handleExcluir(teste.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          })
         )}
       </TableBody>
     </Table>
@@ -275,9 +269,9 @@ export default function Testes() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Testes</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Catálogo de Testes</h1>
           <p className="text-muted-foreground">
-            Gerenciamento de testes internos e externos
+            Gerenciamento dos exames oferecidos pelo laboratório.
           </p>
         </div>
         
@@ -292,7 +286,7 @@ export default function Testes() {
             <DialogHeader>
               <DialogTitle>Cadastrar Novo Teste</DialogTitle>
               <DialogDescription>
-                Este teste ficará disponível para seleção na entrada de amostras.
+                Este teste ficará disponível imediatamente para seleção.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
@@ -370,7 +364,7 @@ export default function Testes() {
               </Button>
               <Button onClick={handleAdicionar} disabled={saving}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Salvar
+                Salvar e Ativar
               </Button>
             </DialogFooter>
           </DialogContent>
