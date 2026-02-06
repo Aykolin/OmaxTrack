@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,80 +35,159 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Search, MoreHorizontal, Play, CheckCircle, Clock, Trash2, CalendarClock } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Play, CheckCircle, Clock, Trash2, CalendarClock, Loader2 } from "lucide-react";
+import { supabase } from "@/lib/supabase"; // Importante: Conexão com o banco
+import { toast } from "sonner";
+import { TipoProcessamento } from "@/types";
 
+// Interface alinhada com o banco de dados
 interface Teste {
   id: string;
   codigo: string;
-  nome: string; // Novo campo 
-  amostra: string;
-  tipo: "interno" | "externo";
+  nome: string;
+  amostra?: string; // Campo opcional no banco
+  tipo: TipoProcessamento;
   metodo: string;
-  prazo: string; // Novo campo 
+  prazo: string;
   status: "pendente" | "em_execucao" | "concluido";
-  resultado?: string;
 }
 
 const statusLabels = {
   pendente: { label: "Pendente", variant: "secondary" as const, icon: Clock },
   em_execucao: { label: "Em Execução", variant: "default" as const, icon: Play },
   concluido: { label: "Concluído", variant: "outline" as const, icon: CheckCircle },
+  ativo: { label: "Ativo", variant: "secondary" as const, icon: CheckCircle }, // Fallback para status antigo
 };
 
 export default function Testes() {
   const [testes, setTestes] = useState<Teste[]>([]);
+  const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   
-  // Estado do formulário atualizado com os novos campos
+  // Estado do formulário
   const [novoTeste, setNovoTeste] = useState({
     codigo: "",
     nome: "",
     amostra: "",
-    tipo: "" as "interno" | "externo",
+    tipo: "INTERNO" as "INTERNO" | "EXTERNO",
     metodo: "",
     prazo: "",
   });
+
+  // 1. CARREGAR DO SUPABASE (O segredo para não sumir!)
+  useEffect(() => {
+    fetchTestes();
+  }, []);
+
+  async function fetchTestes() {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('testes')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      
+      // Normalização simples dos dados vindos do banco
+      const dadosFormatados = (data || []).map(t => ({
+        ...t,
+        status: t.status === 'ativo' ? 'pendente' : t.status // Converte status legado se necessário
+      }));
+
+      setTestes(dadosFormatados);
+    } catch (error: any) {
+      toast.error("Erro ao carregar testes: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // 2. SALVAR NO SUPABASE
+  const handleAdicionar = async () => {
+    if (!novoTeste.codigo || !novoTeste.nome || !novoTeste.tipo || !novoTeste.prazo) {
+      toast.warning("Preencha os campos obrigatórios.");
+      return;
+    }
+    
+    try {
+      setSaving(true);
+      const { data, error } = await supabase
+        .from('testes')
+        .insert([
+          {
+            codigo: novoTeste.codigo,
+            nome: novoTeste.nome,
+            amostra: novoTeste.amostra,
+            tipo: novoTeste.tipo,
+            metodo: novoTeste.metodo || "-",
+            prazo: novoTeste.prazo,
+            status: 'pendente'
+          }
+        ])
+        .select();
+
+      if (error) throw error;
+
+      if (data) {
+        setTestes([data[0], ...testes]); // Atualiza lista local
+        toast.success("Teste salvo no banco de dados!");
+        setNovoTeste({ codigo: "", nome: "", amostra: "", tipo: "INTERNO", metodo: "", prazo: "" });
+        setDialogOpen(false);
+      }
+    } catch (error: any) {
+      toast.error("Erro ao salvar: " + error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // 3. EXCLUIR NO SUPABASE
+  const handleExcluir = async (id: string) => {
+    if (!confirm("Tem certeza? Isso pode afetar amostras vinculadas.")) return;
+
+    try {
+      const { error } = await supabase.from('testes').delete().eq('id', id);
+      if (error) throw error;
+
+      setTestes(testes.filter(t => t.id !== id));
+      toast.success("Teste excluído.");
+    } catch (error: any) {
+      toast.error("Erro ao excluir: " + error.message);
+    }
+  };
+
+  // 4. ALTERAR STATUS NO SUPABASE
+  const handleStatusChange = async (id: string, novoStatus: Teste["status"]) => {
+    // Atualização Otimista (Muda na tela antes do banco responder para ser rápido)
+    const backup = [...testes];
+    setTestes(testes.map(t => t.id === id ? { ...t, status: novoStatus } : t));
+
+    try {
+      const { error } = await supabase
+        .from('testes')
+        .update({ status: novoStatus })
+        .eq('id', id);
+
+      if (error) throw error;
+      toast.success("Status atualizado.");
+    } catch (error: any) {
+      setTestes(backup); // Reverte se der erro
+      toast.error("Erro ao atualizar: " + error.message);
+    }
+  };
 
   const testesFiltrados = testes.filter(
     (t) =>
       t.codigo.toLowerCase().includes(busca.toLowerCase()) ||
       t.nome.toLowerCase().includes(busca.toLowerCase()) ||
-      t.amostra.toLowerCase().includes(busca.toLowerCase())
+      (t.amostra && t.amostra.toLowerCase().includes(busca.toLowerCase()))
   );
 
-  const testesInternos = testesFiltrados.filter(t => t.tipo === "interno");
-  const testesExternos = testesFiltrados.filter(t => t.tipo === "externo");
-
-  const handleAdicionar = () => {
-    // Validação inclui os novos campos
-    if (!novoTeste.codigo || !novoTeste.nome || !novoTeste.amostra || !novoTeste.tipo || !novoTeste.prazo) return;
-    
-    const novo: Teste = {
-      id: String(testes.length + 1),
-      codigo: novoTeste.codigo,
-      nome: novoTeste.nome,
-      amostra: novoTeste.amostra,
-      tipo: novoTeste.tipo,
-      metodo: novoTeste.metodo || "-",
-      prazo: novoTeste.prazo,
-      status: "pendente",
-    };
-    
-    setTestes([novo, ...testes]);
-    setNovoTeste({ codigo: "", nome: "", amostra: "", tipo: "" as "interno" | "externo", metodo: "", prazo: "" });
-    setDialogOpen(false);
-  };
-
-  const handleExcluir = (id: string) => {
-    setTestes(testes.filter(t => t.id !== id));
-  };
-
-  const handleStatusChange = (id: string, novoStatus: Teste["status"]) => {
-    setTestes(testes.map(t => 
-      t.id === id ? { ...t, status: novoStatus } : t
-    ));
-  };
+  const testesInternos = testesFiltrados.filter(t => t.tipo === "INTERNO");
+  const testesExternos = testesFiltrados.filter(t => t.tipo === "EXTERNO");
 
   const TesteTable = ({ data }: { data: Teste[] }) => (
     <Table>
@@ -126,7 +205,7 @@ export default function Testes() {
         {data.length === 0 ? (
           <TableRow>
             <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-              Nenhum teste encontrado.
+              {loading ? <Loader2 className="h-6 w-6 animate-spin mx-auto" /> : "Nenhum teste encontrado."}
             </TableCell>
           </TableRow>
         ) : (
@@ -135,10 +214,10 @@ export default function Testes() {
               <TableCell>
                 <div className="flex flex-col">
                   <span className="font-medium">{teste.nome}</span>
-                  <span className="text-xs text-muted-foreground">{teste.codigo}</span>
+                  <span className="text-xs text-muted-foreground font-mono">{teste.codigo}</span>
                 </div>
               </TableCell>
-              <TableCell>{teste.amostra}</TableCell>
+              <TableCell>{teste.amostra || "-"}</TableCell>
               <TableCell>{teste.metodo}</TableCell>
               <TableCell>
                 <div className="flex items-center gap-1 text-muted-foreground text-sm">
@@ -147,8 +226,8 @@ export default function Testes() {
                 </div>
               </TableCell>
               <TableCell>
-                <Badge variant={statusLabels[teste.status].variant} className="gap-1">
-                  {statusLabels[teste.status].label}
+                <Badge variant={statusLabels[teste.status]?.variant || "secondary"} className="gap-1">
+                  {statusLabels[teste.status]?.label || teste.status}
                 </Badge>
               </TableCell>
               <TableCell className="text-right">
@@ -213,7 +292,7 @@ export default function Testes() {
             <DialogHeader>
               <DialogTitle>Cadastrar Novo Teste</DialogTitle>
               <DialogDescription>
-                Preencha os dados obrigatórios do teste conforme o documento.
+                Este teste ficará disponível para seleção na entrada de amostras.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
@@ -242,7 +321,7 @@ export default function Testes() {
                 <Label htmlFor="amostra">Amostra Vinculada</Label>
                 <Input
                   id="amostra"
-                  placeholder="Código da Amostra (AM-...)"
+                  placeholder="Ex: Sangue Periférico"
                   value={novoTeste.amostra}
                   onChange={(e) => setNovoTeste({ ...novoTeste, amostra: e.target.value })}
                 />
@@ -253,14 +332,14 @@ export default function Testes() {
                   <Label htmlFor="tipo">Processamento</Label>
                   <Select 
                     value={novoTeste.tipo}
-                    onValueChange={(value: "interno" | "externo") => setNovoTeste({ ...novoTeste, tipo: value })}
+                    onValueChange={(value: "INTERNO" | "EXTERNO") => setNovoTeste({ ...novoTeste, tipo: value })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Selecione" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="interno">Interno</SelectItem>
-                      <SelectItem value="externo">Externo</SelectItem>
+                      <SelectItem value="INTERNO">Interno</SelectItem>
+                      <SelectItem value="EXTERNO">Externo</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -268,7 +347,7 @@ export default function Testes() {
                   <Label htmlFor="prazo">Prazo Resultado</Label>
                   <Input
                     id="prazo"
-                    placeholder="Ex: 5 dias ou 48h"
+                    placeholder="Ex: 5 dias"
                     value={novoTeste.prazo}
                     onChange={(e) => setNovoTeste({ ...novoTeste, prazo: e.target.value })}
                   />
@@ -276,20 +355,23 @@ export default function Testes() {
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="metodo">Método (Opcional)</Label>
+                <Label htmlFor="metodo">Método</Label>
                 <Input
                   id="metodo"
-                  placeholder="Ex: PCR, Sequenciamento..."
+                  placeholder="Ex: PCR"
                   value={novoTeste.metodo}
                   onChange={(e) => setNovoTeste({ ...novoTeste, metodo: e.target.value })}
                 />
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
                 Cancelar
               </Button>
-              <Button onClick={handleAdicionar}>Salvar Teste</Button>
+              <Button onClick={handleAdicionar} disabled={saving}>
+                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Salvar
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
