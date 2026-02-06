@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,43 +28,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Search, Barcode, Calendar } from "lucide-react";
+import { Plus, Search, Barcode, Calendar, Loader2 } from "lucide-react";
 import { TipoProcessamento, Amostra, ETAPAS_INTERNAS, ETAPAS_EXTERNAS } from "@/types";
-
-// Mock de testes disponíveis (na vida real viria do banco de dados)
-const TESTES_DISPONIVEIS = [
-  { id: "1", nome: "Sexagem Fetal", tipo: "INTERNO", prazo: 120 },
-  { id: "2", nome: "NIPT Básico", tipo: "EXTERNO", prazo: 240 },
-  { id: "3", nome: "Paternidade Duo", tipo: "INTERNO", prazo: 72 },
-];
+import { supabase } from "@/lib/supabase";
+import { toast } from "sonner";
+import { format, parseISO } from "date-fns";
 
 export default function Amostras() {
-  // Estado inicial simulando dados, usando a interface correta de @/types
-  const [amostras, setAmostras] = useState<Amostra[]>([
-    { 
-      id: "1", 
-      codigoInterno: "AM-2024-001", 
-      paciente: "Maria Silva", 
-      testeSolicitado: "Sexagem Fetal", 
-      tipo: "INTERNO", 
-      dataEntrada: "2024-02-01", 
-      etapaAtual: 2,
-      historico: [] 
-    },
-    { 
-      id: "2", 
-      codigoInterno: "AM-2024-002", 
-      paciente: "João Santos", 
-      testeSolicitado: "NIPT Básico", 
-      tipo: "EXTERNO", 
-      dataEntrada: "2024-02-02", 
-      etapaAtual: 1,
-      historico: [] 
-    },
-  ]);
-
+  const [amostras, setAmostras] = useState<Amostra[]>([]);
+  const [testesDisponiveis, setTestesDisponiveis] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   
   // Estado do formulário
   const [novaAmostra, setNovaAmostra] = useState({
@@ -73,42 +49,112 @@ export default function Amostras() {
     testeId: "",
   });
 
+  // 1. Carregar dados iniciais (Amostras e Lista de Testes para o dropdown)
+  useEffect(() => {
+    fetchDados();
+  }, []);
+
+  async function fetchDados() {
+    try {
+      setLoading(true);
+      
+      // Busca amostras com os dados do teste vinculado (join)
+      const { data: dadosAmostras, error: errorAmostras } = await supabase
+        .from('amostras')
+        .select(`
+          *,
+          testes ( id, nome, tipo )
+        `)
+        .order('created_at', { ascending: false });
+
+      if (errorAmostras) throw errorAmostras;
+
+      // Busca lista de testes ativos para o select
+      const { data: dadosTestes, error: errorTestes } = await supabase
+        .from('testes')
+        .select('*')
+        .eq('status', 'ativo');
+
+      if (errorTestes) throw errorTestes;
+
+      // Mapear dados do banco para o formato da interface Amostra
+      const amostrasFormatadas: Amostra[] = (dadosAmostras || []).map((a: any) => ({
+        id: a.id,
+        codigoInterno: a.codigo_interno,
+        paciente: a.paciente,
+        testeSolicitado: a.testes?.nome || "Desconhecido",
+        tipo: a.tipo as TipoProcessamento, // O tipo vem do banco agora
+        dataEntrada: format(parseISO(a.data_entrada), "yyyy-MM-dd"),
+        etapaAtual: a.etapa_atual,
+        historico: [] // Histórico seria carregado separadamente se necessário
+      }));
+
+      setAmostras(amostrasFormatadas);
+      setTestesDisponiveis(dadosTestes || []);
+
+    } catch (error: any) {
+      toast.error("Erro ao carregar dados: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const handleAdicionar = async () => {
+    if (!novaAmostra.codigoInterno || !novaAmostra.paciente || !novaAmostra.testeId) {
+      toast.warning("Preencha todos os campos obrigatórios.");
+      return;
+    }
+    
+    // Encontra o teste selecionado para pegar o Tipo automaticamente
+    const testeSelecionado = testesDisponiveis.find(t => t.id === novaAmostra.testeId);
+    if (!testeSelecionado) return;
+
+    try {
+      setSaving(true);
+      
+      // Inserir no Supabase
+      const { data, error } = await supabase
+        .from('amostras')
+        .insert([
+          {
+            codigo_interno: novaAmostra.codigoInterno,
+            paciente: novaAmostra.paciente,
+            teste_id: novaAmostra.testeId,
+            tipo: testeSelecionado.tipo, // Salva o tipo (Interno/Externo) baseado no teste
+            etapa_atual: 0,
+            data_entrada: new Date().toISOString()
+          }
+        ])
+        .select();
+
+      if (error) throw error;
+
+      if (data) {
+        toast.success("Amostra cadastrada com sucesso!");
+        // Recarrega a lista para mostrar a nova amostra
+        fetchDados();
+        setNovaAmostra({ codigoInterno: "", paciente: "", testeId: "" });
+        setDialogOpen(false);
+      }
+
+    } catch (error: any) {
+      toast.error("Erro ao salvar: " + error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const getNomeEtapa = (amostra: Amostra) => {
+    const etapas = amostra.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
+    const index = Math.min(amostra.etapaAtual, etapas.length - 1);
+    return etapas[index].nome;
+  };
+
   const amostrasFiltradas = amostras.filter(
     (a) =>
       a.codigoInterno.toLowerCase().includes(busca.toLowerCase()) ||
       a.paciente.toLowerCase().includes(busca.toLowerCase())
   );
-
-  const handleAdicionar = () => {
-    if (!novaAmostra.codigoInterno || !novaAmostra.paciente || !novaAmostra.testeId) return;
-    
-    // Encontra o teste selecionado para pegar o Tipo automaticamente
-    const testeSelecionado = TESTES_DISPONIVEIS.find(t => t.id === novaAmostra.testeId);
-    if (!testeSelecionado) return;
-
-    const nova: Amostra = {
-      id: String(amostras.length + 1),
-      codigoInterno: novaAmostra.codigoInterno,
-      paciente: novaAmostra.paciente,
-      testeSolicitado: testeSelecionado.nome,
-      tipo: testeSelecionado.tipo as TipoProcessamento, // Define automaticamente se é Interno/Externo
-      dataEntrada: new Date().toISOString().split("T")[0],
-      etapaAtual: 0, // Começa na primeira etapa
-      historico: []
-    };
-    
-    setAmostras([nova, ...amostras]);
-    setNovaAmostra({ codigoInterno: "", paciente: "", testeId: "" });
-    setDialogOpen(false);
-  };
-
-  // Função auxiliar para pegar o nome da etapa atual
-  const getNomeEtapa = (amostra: Amostra) => {
-    const etapas = amostra.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
-    // Garante que o índice está dentro dos limites
-    const etapa = etapas[amostra.etapaAtual] || etapas[etapas.length - 1];
-    return etapa.nome;
-  };
 
   return (
     <div className="space-y-6">
@@ -131,7 +177,7 @@ export default function Amostras() {
             <DialogHeader>
               <DialogTitle>Cadastro de Amostra</DialogTitle>
               <DialogDescription>
-                Insira os dados da amostra recebida.
+                Insira os dados da amostra recebida. O tipo (Interno/Externo) será definido pelo teste escolhido.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
@@ -165,10 +211,10 @@ export default function Amostras() {
                   onValueChange={(value) => setNovaAmostra({ ...novaAmostra, testeId: value })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Selecione o teste..." />
+                    <SelectValue placeholder={loading ? "Carregando testes..." : "Selecione o teste..."} />
                   </SelectTrigger>
                   <SelectContent>
-                    {TESTES_DISPONIVEIS.map((teste) => (
+                    {testesDisponiveis.map((teste) => (
                       <SelectItem key={teste.id} value={teste.id}>
                         {teste.nome} ({teste.tipo})
                       </SelectItem>
@@ -178,10 +224,13 @@ export default function Amostras() {
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
                 Cancelar
               </Button>
-              <Button onClick={handleAdicionar}>Cadastrar Amostra</Button>
+              <Button onClick={handleAdicionar} disabled={saving}>
+                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Cadastrar Amostra
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -202,44 +251,57 @@ export default function Amostras() {
           </div>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Código Interno</TableHead>
-                <TableHead>Paciente</TableHead>
-                <TableHead>Teste</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead>Data Entrada</TableHead>
-                <TableHead>Status Atual</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {amostrasFiltradas.map((amostra) => (
-                <TableRow key={amostra.id}>
-                  <TableCell className="font-medium font-mono">{amostra.codigoInterno}</TableCell>
-                  <TableCell>{amostra.paciente}</TableCell>
-                  <TableCell>{amostra.testeSolicitado}</TableCell>
-                  <TableCell>
-                    <Badge variant={amostra.tipo === "INTERNO" ? "secondary" : "outline"}>
-                      {amostra.tipo}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Calendar className="h-3 w-3 text-muted-foreground" />
-                      {amostra.dataEntrada}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    {/* Badge dinâmico mostrando o nome da etapa atual */}
-                    <Badge variant="default" className="bg-blue-600 hover:bg-blue-700">
-                      {getNomeEtapa(amostra)}
-                    </Badge>
-                  </TableCell>
+          {loading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Código Interno</TableHead>
+                  <TableHead>Paciente</TableHead>
+                  <TableHead>Teste</TableHead>
+                  <TableHead>Tipo</TableHead>
+                  <TableHead>Data Entrada</TableHead>
+                  <TableHead>Status Atual</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {amostrasFiltradas.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      Nenhuma amostra encontrada.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  amostrasFiltradas.map((amostra) => (
+                    <TableRow key={amostra.id}>
+                      <TableCell className="font-medium font-mono">{amostra.codigoInterno}</TableCell>
+                      <TableCell>{amostra.paciente}</TableCell>
+                      <TableCell>{amostra.testeSolicitado}</TableCell>
+                      <TableCell>
+                        <Badge variant={amostra.tipo === "INTERNO" ? "secondary" : "outline"}>
+                          {amostra.tipo}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Calendar className="h-3 w-3 text-muted-foreground" />
+                          {amostra.dataEntrada}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="default" className="bg-blue-600 hover:bg-blue-700">
+                          {getNomeEtapa(amostra)}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>
