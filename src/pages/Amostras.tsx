@@ -28,7 +28,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Search, Barcode, Calendar, Loader2 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel
+} from "@/components/ui/dropdown-menu";
+import { Plus, Search, Barcode, Calendar, Loader2, MoreHorizontal, Trash2, ArrowRightCircle, CheckCircle2, RotateCcw } from "lucide-react";
 import { TipoProcessamento, Amostra, ETAPAS_INTERNAS, ETAPAS_EXTERNAS } from "@/types";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
@@ -42,14 +50,12 @@ export default function Amostras() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   
-  // Estado do formulário
   const [novaAmostra, setNovaAmostra] = useState({
     codigoInterno: "",
     paciente: "",
     testeId: "",
   });
 
-  // 1. Carregar dados iniciais (Amostras e Lista de Testes para o dropdown)
   useEffect(() => {
     fetchDados();
   }, []);
@@ -58,18 +64,13 @@ export default function Amostras() {
     try {
       setLoading(true);
       
-      // Busca amostras com os dados do teste vinculado (join)
       const { data: dadosAmostras, error: errorAmostras } = await supabase
         .from('amostras')
-        .select(`
-          *,
-          testes ( id, nome, tipo )
-        `)
+        .select(`*, testes ( id, nome, tipo )`)
         .order('created_at', { ascending: false });
 
       if (errorAmostras) throw errorAmostras;
 
-      // Busca lista de testes ativos para o select
       const { data: dadosTestes, error: errorTestes } = await supabase
         .from('testes')
         .select('*')
@@ -77,16 +78,15 @@ export default function Amostras() {
 
       if (errorTestes) throw errorTestes;
 
-      // Mapear dados do banco para o formato da interface Amostra
       const amostrasFormatadas: Amostra[] = (dadosAmostras || []).map((a: any) => ({
         id: a.id,
         codigoInterno: a.codigo_interno,
         paciente: a.paciente,
         testeSolicitado: a.testes?.nome || "Desconhecido",
-        tipo: a.tipo as TipoProcessamento, // O tipo vem do banco agora
+        tipo: a.tipo as TipoProcessamento,
         dataEntrada: format(parseISO(a.data_entrada), "yyyy-MM-dd"),
         etapaAtual: a.etapa_atual,
-        historico: [] // Histórico seria carregado separadamente se necessário
+        historico: []
       }));
 
       setAmostras(amostrasFormatadas);
@@ -105,33 +105,28 @@ export default function Amostras() {
       return;
     }
     
-    // Encontra o teste selecionado para pegar o Tipo automaticamente
     const testeSelecionado = testesDisponiveis.find(t => t.id === novaAmostra.testeId);
     if (!testeSelecionado) return;
 
     try {
       setSaving(true);
       
-      // Inserir no Supabase
       const { data, error } = await supabase
         .from('amostras')
-        .insert([
-          {
+        .insert([{
             codigo_interno: novaAmostra.codigoInterno,
             paciente: novaAmostra.paciente,
             teste_id: novaAmostra.testeId,
-            tipo: testeSelecionado.tipo, // Salva o tipo (Interno/Externo) baseado no teste
+            tipo: testeSelecionado.tipo,
             etapa_atual: 0,
             data_entrada: new Date().toISOString()
-          }
-        ])
+        }])
         .select();
 
       if (error) throw error;
 
       if (data) {
         toast.success("Amostra cadastrada com sucesso!");
-        // Recarrega a lista para mostrar a nova amostra
         fetchDados();
         setNovaAmostra({ codigoInterno: "", paciente: "", testeId: "" });
         setDialogOpen(false);
@@ -143,6 +138,38 @@ export default function Amostras() {
       setSaving(false);
     }
   };
+
+  // --- NOVAS FUNÇÕES DE AÇÃO ---
+
+  const handleExcluir = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir esta amostra?")) return;
+    try {
+      const { error } = await supabase.from('amostras').delete().eq('id', id);
+      if (error) throw error;
+      toast.success("Amostra excluída.");
+      setAmostras(amostras.filter(a => a.id !== id));
+    } catch (error: any) {
+      toast.error("Erro ao excluir: " + error.message);
+    }
+  };
+
+  const handleAlterarStatus = async (id: string, novaEtapa: number) => {
+    try {
+      const { error } = await supabase
+        .from('amostras')
+        .update({ etapa_atual: novaEtapa })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      toast.success("Status atualizado.");
+      fetchDados(); // Atualiza a lista para refletir a mudança
+    } catch (error: any) {
+      toast.error("Erro ao atualizar status: " + error.message);
+    }
+  };
+
+  // --- AUXILIARES ---
 
   const getNomeEtapa = (amostra: Amostra) => {
     const etapas = amostra.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
@@ -265,12 +292,13 @@ export default function Amostras() {
                   <TableHead>Tipo</TableHead>
                   <TableHead>Data Entrada</TableHead>
                   <TableHead>Status Atual</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {amostrasFiltradas.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                       Nenhuma amostra encontrada.
                     </TableCell>
                   </TableRow>
@@ -295,6 +323,43 @@ export default function Amostras() {
                         <Badge variant="default" className="bg-blue-600 hover:bg-blue-700">
                           {getNomeEtapa(amostra)}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuLabel>Alterar Status</DropdownMenuLabel>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => handleAlterarStatus(amostra.id, amostra.etapaAtual + 1)}>
+                                <ArrowRightCircle className="mr-2 h-4 w-4" />
+                                Avançar Etapa
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleAlterarStatus(amostra.id, 0)}>
+                                <RotateCcw className="mr-2 h-4 w-4" />
+                                Reiniciar Processo
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => handleAlterarStatus(amostra.id, 99)} className="text-green-600">
+                                <CheckCircle2 className="mr-2 h-4 w-4" />
+                                Forçar Conclusão
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-red-500 hover:bg-red-50"
+                            onClick={() => handleExcluir(amostra.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
