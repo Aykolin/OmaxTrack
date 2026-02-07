@@ -73,7 +73,6 @@ export default function Testes() {
     metodo: "",
   });
 
-  // Novos estados para controlar o prazo separadamente
   const [prazoValor, setPrazoValor] = useState("");
   const [prazoUnidade, setPrazoUnidade] = useState("dias");
 
@@ -99,13 +98,11 @@ export default function Testes() {
   }
 
   const handleAdicionar = async () => {
-    // Validação
     if (!novoTeste.codigo || !novoTeste.nome || !novoTeste.tipo || !prazoValor) {
       toast.warning("Preencha os campos obrigatórios.");
       return;
     }
 
-    // Constrói a string do prazo (Ex: "5 dias")
     const prazoFinal = `${prazoValor} ${prazoUnidade}`;
     
     try {
@@ -119,7 +116,7 @@ export default function Testes() {
             amostra: novoTeste.amostra,
             tipo: novoTeste.tipo,
             metodo: novoTeste.metodo || "-",
-            prazo: prazoFinal, // Salva o prazo formatado
+            prazo: prazoFinal,
             status: 'ativo'
           }
         ])
@@ -131,7 +128,6 @@ export default function Testes() {
         setTestes([data[0], ...testes]);
         toast.success("Teste salvo e ativo!");
         
-        // Limpa o formulário
         setNovoTeste({ codigo: "", nome: "", amostra: "", tipo: "INTERNO", metodo: "" });
         setPrazoValor("");
         setPrazoUnidade("dias");
@@ -144,13 +140,26 @@ export default function Testes() {
     }
   };
 
+  // --- FUNÇÃO DE EXCLUSÃO ATUALIZADA ---
   const handleExcluir = async (id: string) => {
-    if (!confirm("Tem certeza? Isso pode afetar amostras vinculadas.")) return;
+    if (!confirm("Tem certeza? Esta ação é irreversível.")) return;
+    
     try {
       const { error } = await supabase.from('testes').delete().eq('id', id);
-      if (error) throw error;
+      
+      if (error) {
+        // Tratamento específico para erro de chave estrangeira (FK)
+        // Código 23503 = foreign_key_violation
+        if (error.code === '23503') {
+           toast.error("Ação bloqueada: Existem amostras vinculadas a este teste. Exclua as amostras primeiro ou inative o teste.");
+        } else {
+           throw error; // Lança outros erros normalmente
+        }
+        return;
+      }
+
       setTestes(testes.filter(t => t.id !== id));
-      toast.success("Teste excluído.");
+      toast.success("Teste excluído com sucesso.");
     } catch (error: any) {
       toast.error("Erro ao excluir: " + error.message);
     }
@@ -346,7 +355,6 @@ export default function Testes() {
                   </Select>
                 </div>
 
-                {/* --- SELETOR DE PRAZO ATUALIZADO --- */}
                 <div className="grid gap-2">
                   <Label htmlFor="prazo">Prazo Resultado</Label>
                   <div className="flex gap-2">
