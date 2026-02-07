@@ -6,8 +6,10 @@ import { FlaskConical, AlertTriangle, CheckCircle2, ArrowRight, Activity, Clock 
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { differenceInSeconds, parseISO, isSameDay } from "date-fns";
-import { parsePrazoToSeconds } from "@/lib/utils"; // Importa a função que criámos acima
+import { parsePrazoToSeconds } from "@/lib/utils";
 import { ETAPAS_INTERNAS, ETAPAS_EXTERNAS } from "@/types";
+// Importar o novo componente de Alarme
+import { AlertaAtraso } from "@/components/AlertaAtraso";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -16,14 +18,13 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchDashboardData();
-    // Atualiza a cada 30 segundos para manter os cálculos de tempo "vivos"
+    // Atualiza a cada 30 segundos
     const interval = setInterval(fetchDashboardData, 30000);
     return () => clearInterval(interval);
   }, []);
 
   async function fetchDashboardData() {
     try {
-      // Busca todas as amostras E o prazo do teste associado
       const { data, error } = await supabase
         .from('amostras')
         .select(`*, testes ( nome, prazo )`)
@@ -38,7 +39,7 @@ export default function Dashboard() {
     }
   }
 
-  // Cálculos de KPI e Lógica de Atrasos
+  // Cálculos de KPI
   const stats = useMemo(() => {
     const hoje = new Date();
     let totalAtivas = 0;
@@ -48,32 +49,24 @@ export default function Dashboard() {
 
     amostras.forEach(a => {
       const etapas = a.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
-      
-      // Verifica se está concluído (última etapa)
       const isConcluido = a.etapa_atual >= etapas.length - 1;
 
       if (isConcluido) {
-        // Conta se foi concluído hoje (usando created_at como base simplificada)
         if (isSameDay(parseISO(a.created_at), hoje)) {
            totalConcluidasHoje++; 
         }
       } else {
         totalAtivas++;
         
-        // --- LÓGICA DE ATRASO REAL ---
-        // 1. Converte o prazo do teste (ex: "5 dias") para segundos
+        // Lógica de Atraso
         const prazoSegundos = parsePrazoToSeconds(a.testes?.prazo || "");
         
         if (prazoSegundos > 0) {
           const dataEntrada = parseISO(a.data_entrada);
-          // 2. Calcula quantos segundos passaram desde a entrada
           const segundosPassados = differenceInSeconds(hoje, dataEntrada);
           
-          // 3. Se passou mais tempo do que o prazo permite -> ATRASO
           if (segundosPassados > prazoSegundos) {
             totalAtrasadas++;
-            
-            // Adiciona à lista de prioridade
             listaAtrasadas.push({
               ...a,
               segundosAtraso: segundosPassados - prazoSegundos,
@@ -89,12 +82,10 @@ export default function Dashboard() {
       totalAtivas,
       totalConcluidasHoje,
       totalAtrasadas,
-      // Ordena os atrasos (maiores atrasos primeiro) e pega os top 5
-      listaAtrasadas: listaAtrasadas.sort((a, b) => b.segundosAtraso - a.segundosAtraso).slice(0, 5)
+      listaAtrasadas: listaAtrasadas.sort((a, b) => b.segundosAtraso - a.segundosAtraso)
     };
   }, [amostras]);
 
-  // Função auxiliar para formatar o tempo de atraso (ex: "2h 15m")
   const formatarAtraso = (segundos: number) => {
     const d = Math.floor(segundos / 86400);
     const h = Math.floor((segundos % 86400) / 3600);
@@ -106,6 +97,9 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* --- COMPONENTE DE ALARME (Invisível até ativar) --- */}
+      <AlertaAtraso atrasados={stats.listaAtrasadas} />
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard Operacional</h1>
@@ -119,9 +113,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* --- CARTÕES DE KPI --- */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {/* Em Processamento */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Em Processamento</CardTitle>
@@ -133,10 +125,9 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Atrasos (Muda de cor se houver problemas) */}
-        <Card className={stats.totalAtrasadas > 0 ? "border-red-500 bg-red-50 dark:bg-red-900/20" : ""}>
+        <Card className={stats.totalAtrasadas > 0 ? "border-red-500 bg-red-50 dark:bg-red-900/20 shadow-md shadow-red-100 dark:shadow-red-900/10" : ""}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className={`text-sm font-medium ${stats.totalAtrasadas > 0 ? "text-red-700" : ""}`}>
+            <CardTitle className={`text-sm font-medium ${stats.totalAtrasadas > 0 ? "text-red-700 font-bold" : ""}`}>
               Fora do Prazo (SLA)
             </CardTitle>
             <AlertTriangle className={`h-4 w-4 ${stats.totalAtrasadas > 0 ? "text-red-600 animate-pulse" : "text-muted-foreground"}`} />
@@ -146,12 +137,11 @@ export default function Dashboard() {
               {stats.totalAtrasadas}
             </div>
             <p className={`text-xs ${stats.totalAtrasadas > 0 ? "text-red-600/80" : "text-muted-foreground"}`}>
-              Excederam o tempo limite do teste
+              Excederam o tempo limite
             </p>
           </CardContent>
         </Card>
 
-        {/* Concluídos */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Concluídos (Hoje)</CardTitle>
@@ -164,10 +154,7 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* --- LISTAS DE DETALHE --- */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-        
-        {/* LISTA DE PRIORIDADE ALTA (ATRASOS) */}
         <Card className="col-span-4 border-red-100 dark:border-red-900/50">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -186,7 +173,7 @@ export default function Dashboard() {
               </div>
             ) : (
               <div className="space-y-3">
-                {stats.listaAtrasadas.map((amostra) => (
+                {stats.listaAtrasadas.slice(0, 5).map((amostra) => (
                   <div key={amostra.id} className="flex items-center justify-between p-3 bg-white dark:bg-slate-950 border border-red-200 dark:border-red-800 rounded-lg shadow-sm hover:shadow-md transition-shadow">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
@@ -213,15 +200,12 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* BARRA DE PROGRESSO / SAÚDE GERAL */}
         <Card className="col-span-3 bg-slate-50 dark:bg-slate-900">
           <CardHeader>
             <CardTitle>Saúde do Laboratório</CardTitle>
             <CardDescription>Resumo de performance</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            
-            {/* Barra de Progresso Visual */}
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span>Taxa de Pontualidade</span>
