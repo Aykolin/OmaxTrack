@@ -2,11 +2,12 @@ import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { FlaskConical, AlertTriangle, CheckCircle2, ArrowRight, Clock, Activity } from "lucide-react";
+import { FlaskConical, AlertTriangle, CheckCircle2, ArrowRight, Activity, Clock } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import { differenceInSeconds, parseISO, isSameDay } from "date-fns";
+import { parsePrazoToSeconds } from "@/lib/utils"; // Importa a função que criámos acima
 import { ETAPAS_INTERNAS, ETAPAS_EXTERNAS } from "@/types";
-import { differenceInHours, parseISO, isSameDay } from "date-fns";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -15,17 +16,17 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchDashboardData();
-    
-    // Auto-refresh para manter o dashboard vivo (opcional)
-    const interval = setInterval(fetchDashboardData, 30000); // 30 segundos
+    // Atualiza a cada 30 segundos para manter os cálculos de tempo "vivos"
+    const interval = setInterval(fetchDashboardData, 30000);
     return () => clearInterval(interval);
   }, []);
 
   async function fetchDashboardData() {
     try {
+      // Busca todas as amostras E o prazo do teste associado
       const { data, error } = await supabase
         .from('amostras')
-        .select(`*, testes ( nome )`)
+        .select(`*, testes ( nome, prazo )`)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -37,6 +38,7 @@ export default function Dashboard() {
     }
   }
 
+  // Cálculos de KPI e Lógica de Atrasos
   const stats = useMemo(() => {
     const hoje = new Date();
     let totalAtivas = 0;
@@ -46,35 +48,39 @@ export default function Dashboard() {
 
     amostras.forEach(a => {
       const etapas = a.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
-      const totalEtapas = etapas.length;
-      // Garante que o índice existe
-      const etapaIndex = Math.min(a.etapa_atual, totalEtapas - 1);
-      const etapaAtualInfo = etapas[etapaIndex];
-
-      const isConcluido = a.etapa_atual >= totalEtapas - 1;
       
+      // Verifica se está concluído (última etapa)
+      const isConcluido = a.etapa_atual >= etapas.length - 1;
+
       if (isConcluido) {
-        // Verifica se foi criado hoje (uma simplificação, idealmente usaria data de conclusão)
+        // Conta se foi concluído hoje (usando created_at como base simplificada)
         if (isSameDay(parseISO(a.created_at), hoje)) {
            totalConcluidasHoje++; 
         }
       } else {
         totalAtivas++;
         
-        // Lógica de Atraso: Se a amostra está no sistema há mais horas do que o prazo desta etapa permite
-        // (Nota: Esta é uma lógica simplificada para MVP. A lógica real usaria o histórico de movimentação)
-        if (etapaAtualInfo.prazoHoras > 0) {
-            const horasCorridas = differenceInHours(hoje, parseISO(a.data_entrada));
+        // --- LÓGICA DE ATRASO REAL ---
+        // 1. Converte o prazo do teste (ex: "5 dias") para segundos
+        const prazoSegundos = parsePrazoToSeconds(a.testes?.prazo || "");
+        
+        if (prazoSegundos > 0) {
+          const dataEntrada = parseISO(a.data_entrada);
+          // 2. Calcula quantos segundos passaram desde a entrada
+          const segundosPassados = differenceInSeconds(hoje, dataEntrada);
+          
+          // 3. Se passou mais tempo do que o prazo permite -> ATRASO
+          if (segundosPassados > prazoSegundos) {
+            totalAtrasadas++;
             
-            if (horasCorridas > etapaAtualInfo.prazoHoras) {
-                totalAtrasadas++;
-                listaAtrasadas.push({ 
-                  ...a, 
-                  horasAtraso: horasCorridas - etapaAtualInfo.prazoHoras, 
-                  etapaNome: etapaAtualInfo.nome,
-                  testeNome: a.testes?.nome 
-                });
-            }
+            // Adiciona à lista de prioridade
+            listaAtrasadas.push({
+              ...a,
+              segundosAtraso: segundosPassados - prazoSegundos,
+              prazoTotal: prazoSegundos,
+              etapaNome: etapas[a.etapa_atual]?.nome || "Desconhecido"
+            });
+          }
         }
       }
     });
@@ -83,9 +89,20 @@ export default function Dashboard() {
       totalAtivas,
       totalConcluidasHoje,
       totalAtrasadas,
-      listaAtrasadas: listaAtrasadas.slice(0, 5) // Mostrar apenas top 5
+      // Ordena os atrasos (maiores atrasos primeiro) e pega os top 5
+      listaAtrasadas: listaAtrasadas.sort((a, b) => b.segundosAtraso - a.segundosAtraso).slice(0, 5)
     };
   }, [amostras]);
+
+  // Função auxiliar para formatar o tempo de atraso (ex: "2h 15m")
+  const formatarAtraso = (segundos: number) => {
+    const d = Math.floor(segundos / 86400);
+    const h = Math.floor((segundos % 86400) / 3600);
+    const m = Math.floor((segundos % 3600) / 60);
+    
+    if (d > 0) return `${d}d ${h}h`;
+    return `${h}h ${m}m`;
+  };
 
   return (
     <div className="space-y-6">
@@ -96,14 +113,15 @@ export default function Dashboard() {
             Visão geral em tempo real do laboratório.
           </p>
         </div>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 px-3 py-1 rounded-full">
-          <Activity className="h-4 w-4 text-green-500" />
-          <span>Sistema Online</span>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 px-3 py-1 rounded-full border">
+          <Activity className="h-4 w-4 text-green-500 animate-pulse" />
+          <span>Monitoramento Ativo</span>
         </div>
       </div>
 
-      {/* --- KPI CARDS --- */}
+      {/* --- CARTÕES DE KPI --- */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {/* Em Processamento */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Em Processamento</CardTitle>
@@ -115,17 +133,25 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className={stats.totalAtrasadas > 0 ? "border-red-200 bg-red-50 dark:bg-red-900/10" : ""}>
+        {/* Atrasos (Muda de cor se houver problemas) */}
+        <Card className={stats.totalAtrasadas > 0 ? "border-red-500 bg-red-50 dark:bg-red-900/20" : ""}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-red-600">Atenção Necessária</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-red-600" />
+            <CardTitle className={`text-sm font-medium ${stats.totalAtrasadas > 0 ? "text-red-700" : ""}`}>
+              Fora do Prazo (SLA)
+            </CardTitle>
+            <AlertTriangle className={`h-4 w-4 ${stats.totalAtrasadas > 0 ? "text-red-600 animate-pulse" : "text-muted-foreground"}`} />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">{stats.totalAtrasadas}</div>
-            <p className="text-xs text-red-600/80">Amostras fora do prazo</p>
+            <div className={`text-2xl font-bold ${stats.totalAtrasadas > 0 ? "text-red-700" : ""}`}>
+              {stats.totalAtrasadas}
+            </div>
+            <p className={`text-xs ${stats.totalAtrasadas > 0 ? "text-red-600/80" : "text-muted-foreground"}`}>
+              Excederam o tempo limite do teste
+            </p>
           </CardContent>
         </Card>
 
+        {/* Concluídos */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Concluídos (Hoje)</CardTitle>
@@ -138,44 +164,48 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* --- ALERTAS E DETALHES --- */}
+      {/* --- LISTAS DE DETALHE --- */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-        <Card className="col-span-4">
+        
+        {/* LISTA DE PRIORIDADE ALTA (ATRASOS) */}
+        <Card className="col-span-4 border-red-100 dark:border-red-900/50">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-orange-500" />
-              Prioridade Alta (Atrasos)
+              <Clock className="h-5 w-5 text-red-500" />
+              Prioridade Alta
             </CardTitle>
             <CardDescription>
-              Amostras que excederam o tempo estimado da etapa atual.
+              Amostras que já deveriam ter sido entregues.
             </CardDescription>
           </CardHeader>
           <CardContent>
             {stats.listaAtrasadas.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                <CheckCircle2 className="h-12 w-12 text-green-500 mb-2 opacity-20" />
-                <p>Nenhum atraso crítico no momento.</p>
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground bg-muted/10 rounded-lg border border-dashed">
+                <CheckCircle2 className="h-12 w-12 text-green-500 mb-2 opacity-50" />
+                <p>Nenhum atraso crítico! Tudo dentro do prazo.</p>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {stats.listaAtrasadas.map((amostra) => (
-                  <div key={amostra.id} className="flex items-center justify-between p-4 bg-white dark:bg-slate-900 border rounded-lg shadow-sm">
+                  <div key={amostra.id} className="flex items-center justify-between p-3 bg-white dark:bg-slate-950 border border-red-200 dark:border-red-800 rounded-lg shadow-sm hover:shadow-md transition-shadow">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-red-600">{amostra.codigo_interno}</span>
-                        <Badge variant="outline" className="text-xs">{amostra.testeNome}</Badge>
+                        <span className="font-bold text-red-700 dark:text-red-400">{amostra.codigo_interno}</span>
+                        <Badge variant="outline" className="text-[10px]">{amostra.testes?.nome}</Badge>
                       </div>
-                      <p className="text-sm text-muted-foreground">
-                        Parada em: <span className="font-medium text-foreground">{amostra.etapaNome}</span>
-                      </p>
-                      <p className="text-xs text-red-500 font-medium flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        +{amostra.horasAtraso} horas do esperado
-                      </p>
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <span>Parada em: <strong>{amostra.etapaNome}</strong></span>
+                      </div>
                     </div>
-                    <Button size="sm" variant="outline" onClick={() => navigate("/processamento")}>
-                      Resolver <ArrowRight className="ml-2 h-3 w-3" />
-                    </Button>
+                    
+                    <div className="text-right">
+                      <Badge variant="destructive" className="mb-1 animate-pulse">
+                        Atraso: {formatarAtraso(amostra.segundosAtraso)}
+                      </Badge>
+                      <Button size="sm" variant="ghost" className="h-6 text-xs w-full" onClick={() => navigate("/processamento")}>
+                        Resolver <ArrowRight className="ml-1 h-3 w-3" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -183,23 +213,41 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Card Informativo */}
-        <Card className="col-span-3 bg-primary/5 border-primary/20">
+        {/* BARRA DE PROGRESSO / SAÚDE GERAL */}
+        <Card className="col-span-3 bg-slate-50 dark:bg-slate-900">
           <CardHeader>
-            <CardTitle>Status do Laboratório</CardTitle>
-            <CardDescription>Resumo da operação</CardDescription>
+            <CardTitle>Saúde do Laboratório</CardTitle>
+            <CardDescription>Resumo de performance</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between border-b pb-2 border-primary/10">
-              <span className="text-sm">Capacidade Operacional</span>
-              <span className="font-bold text-primary">Normal</span>
+          <CardContent className="space-y-6">
+            
+            {/* Barra de Progresso Visual */}
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>Taxa de Pontualidade</span>
+                <span className="font-bold">
+                  {stats.totalAtivas > 0 
+                    ? Math.round(((stats.totalAtivas - stats.totalAtrasadas) / stats.totalAtivas) * 100) 
+                    : 100}%
+                </span>
+              </div>
+              <div className="h-2 w-full bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full transition-all duration-500 ${stats.totalAtrasadas > 0 ? 'bg-orange-500' : 'bg-green-500'}`}
+                  style={{ width: `${stats.totalAtivas > 0 ? ((stats.totalAtivas - stats.totalAtrasadas) / stats.totalAtivas) * 100 : 100}%` }}
+                />
+              </div>
             </div>
-            <div className="flex items-center justify-between border-b pb-2 border-primary/10">
-              <span className="text-sm">Total Cadastrado</span>
-              <span className="font-bold">{amostras.length}</span>
-            </div>
-            <div className="p-3 bg-white dark:bg-slate-900 rounded-md text-sm text-muted-foreground">
-              <p>💡 <strong>Dica:</strong> Use a aba "Processamento" para mover as amostras. Ao finalizar uma amostra (última etapa), ela sai da fila e conta como concluída.</p>
+
+            <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+               <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Total em Andamento</span>
+                  <span className="font-mono font-bold">{stats.totalAtivas}</span>
+               </div>
+               <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Testes Concluídos (Hoje)</span>
+                  <span className="font-mono font-bold text-green-600">+{stats.totalConcluidasHoje}</span>
+               </div>
             </div>
           </CardContent>
         </Card>
