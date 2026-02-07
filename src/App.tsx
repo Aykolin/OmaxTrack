@@ -2,10 +2,12 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider, useAuth } from "@/contexts/AuthContext"; // Importar o contexto
-import { Layout } from "./components/Layout";
-// ... (mantenha os imports das páginas Dashboard, Amostras, etc.)
+// MUDANÇA 1: HashRouter para Electron
+import { HashRouter, Routes, Route, Navigate } from "react-router-dom"; 
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+// MUDANÇA 2: Importação com chaves { }
+import { Layout } from "./components/Layout"; 
+
 import Dashboard from "./pages/Dashboard";
 import Amostras from "./pages/Amostras";
 import Testes from "./pages/Testes";
@@ -16,11 +18,11 @@ import Login from "./pages/Login";
 
 const queryClient = new QueryClient();
 
-// Componente de proteção atualizado
+// Movi para fora do componente App para melhor performance
 const RotaProtegida = ({ children }: { children: React.ReactNode }) => {
   const { session, loading } = useAuth();
 
-  if (loading) return <div>Carregando...</div>; // Ou um spinner bonito
+  if (loading) return <div className="flex h-screen items-center justify-center">Carregando...</div>;
   
   if (!session) {
     return <Navigate to="/login" replace />;
@@ -34,12 +36,13 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      {/* Envolver tudo no AuthProvider */}
-      <AuthProvider> 
-        <BrowserRouter>
+      <AuthProvider>
+        {/* HashRouter é essencial para o executável .exe funcionar sem tela branca */}
+        <HashRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
             
+            {/* Estrutura aninhada para passar 'children' ao Layout corretamente */}
             <Route
               path="/*"
               element={
@@ -47,6 +50,7 @@ const App = () => (
                   <Layout>
                     <Routes>
                       <Route path="/" element={<Dashboard />} />
+                      <Route path="/dashboard" element={<Dashboard />} />
                       <Route path="/amostras" element={<Amostras />} />
                       <Route path="/testes" element={<Testes />} />
                       <Route path="/processamento" element={<Processamento />} />
@@ -58,7 +62,7 @@ const App = () => (
               }
             />
           </Routes>
-        </BrowserRouter>
+        </HashRouter>
       </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>
