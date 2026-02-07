@@ -54,7 +54,6 @@ interface Teste {
 const statusLabels = {
   ativo: { label: "Ativo", variant: "default" as const, icon: CheckCircle, className: "bg-green-600 hover:bg-green-700" },
   inativo: { label: "Inativo", variant: "secondary" as const, icon: Archive, className: "text-muted-foreground" },
-  // Fallback para não quebrar com dados antigos
   pendente: { label: "Pendente (Ativar)", variant: "outline" as const, icon: Activity, className: "text-yellow-600 border-yellow-600" },
 };
 
@@ -65,14 +64,18 @@ export default function Testes() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   
+  // Estado do formulário
   const [novoTeste, setNovoTeste] = useState({
     codigo: "",
     nome: "",
     amostra: "",
     tipo: "INTERNO" as "INTERNO" | "EXTERNO",
     metodo: "",
-    prazo: "",
   });
+
+  // Novos estados para controlar o prazo separadamente
+  const [prazoValor, setPrazoValor] = useState("");
+  const [prazoUnidade, setPrazoUnidade] = useState("dias");
 
   useEffect(() => {
     fetchTestes();
@@ -96,10 +99,14 @@ export default function Testes() {
   }
 
   const handleAdicionar = async () => {
-    if (!novoTeste.codigo || !novoTeste.nome || !novoTeste.tipo || !novoTeste.prazo) {
+    // Validação
+    if (!novoTeste.codigo || !novoTeste.nome || !novoTeste.tipo || !prazoValor) {
       toast.warning("Preencha os campos obrigatórios.");
       return;
     }
+
+    // Constrói a string do prazo (Ex: "5 dias")
+    const prazoFinal = `${prazoValor} ${prazoUnidade}`;
     
     try {
       setSaving(true);
@@ -112,8 +119,8 @@ export default function Testes() {
             amostra: novoTeste.amostra,
             tipo: novoTeste.tipo,
             metodo: novoTeste.metodo || "-",
-            prazo: novoTeste.prazo,
-            status: 'ativo' // <--- CORREÇÃO: Agora nasce ATIVO
+            prazo: prazoFinal, // Salva o prazo formatado
+            status: 'ativo'
           }
         ])
         .select();
@@ -123,7 +130,11 @@ export default function Testes() {
       if (data) {
         setTestes([data[0], ...testes]);
         toast.success("Teste salvo e ativo!");
-        setNovoTeste({ codigo: "", nome: "", amostra: "", tipo: "INTERNO", metodo: "", prazo: "" });
+        
+        // Limpa o formulário
+        setNovoTeste({ codigo: "", nome: "", amostra: "", tipo: "INTERNO", metodo: "" });
+        setPrazoValor("");
+        setPrazoUnidade("dias");
         setDialogOpen(false);
       }
     } catch (error: any) {
@@ -145,10 +156,8 @@ export default function Testes() {
     }
   };
 
-  // Função para ativar/inativar
   const handleToggleStatus = async (id: string, statusAtual: string) => {
     const novoStatus = statusAtual === 'ativo' ? 'inativo' : 'ativo';
-    
     const backup = [...testes];
     setTestes(testes.map(t => t.id === id ? { ...t, status: novoStatus as any } : t));
 
@@ -196,7 +205,6 @@ export default function Testes() {
           </TableRow>
         ) : (
           data.map((teste) => {
-            // Tratamento para status antigos
             const statusConfig = statusLabels[teste.status] || statusLabels.pendente;
             const Icon = statusConfig.icon;
 
@@ -337,14 +345,35 @@ export default function Testes() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* --- SELETOR DE PRAZO ATUALIZADO --- */}
                 <div className="grid gap-2">
                   <Label htmlFor="prazo">Prazo Resultado</Label>
-                  <Input
-                    id="prazo"
-                    placeholder="Ex: 5 dias"
-                    value={novoTeste.prazo}
-                    onChange={(e) => setNovoTeste({ ...novoTeste, prazo: e.target.value })}
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="prazo"
+                      type="number"
+                      placeholder="Valor"
+                      min="0"
+                      value={prazoValor}
+                      onChange={(e) => setPrazoValor(e.target.value)}
+                      className="flex-1"
+                    />
+                    <Select 
+                      value={prazoUnidade}
+                      onValueChange={setPrazoUnidade}
+                    >
+                      <SelectTrigger className="w-[110px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="dias">Dias</SelectItem>
+                        <SelectItem value="horas">Horas</SelectItem>
+                        <SelectItem value="minutos">Minutos</SelectItem>
+                        <SelectItem value="segundos">Segundos</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </div>
 

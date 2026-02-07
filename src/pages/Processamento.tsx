@@ -7,12 +7,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   ArrowRight, 
   CheckCircle2, 
-  AlertTriangle, 
   ChevronDown,
   RotateCcw,
   FastForward,
   Clock,
-  Timer as TimerIcon
+  Timer as TimerIcon,
+  AlertTriangle
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -25,68 +25,113 @@ import {
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { Amostra, ETAPAS_INTERNAS, ETAPAS_EXTERNAS, TipoProcessamento } from "@/types";
-import { differenceInSeconds, parseISO } from "date-fns";
+import { differenceInSeconds, parseISO, addSeconds } from "date-fns";
 
-// --- COMPONENTE DE CRONÓMETRO ---
-function Cronometro({ dataInicio, prazoHoras }: { dataInicio: string, prazoHoras: number }) {
-  const [segundos, setSegundos] = useState(0);
+// --- FUNÇÃO AUXILIAR: CONVERTER PRAZO TEXTO EM SEGUNDOS ---
+function parsePrazoToSeconds(prazoStr: string): number {
+  if (!prazoStr) return 0;
+  
+  const [valor, unidade] = prazoStr.toLowerCase().split(' ');
+  const num = parseInt(valor);
+  
+  if (isNaN(num)) return 0;
+
+  switch (unidade) {
+    case 'dias':
+    case 'dia': return num * 86400;
+    case 'horas':
+    case 'hora': return num * 3600;
+    case 'minutos':
+    case 'minuto': return num * 60;
+    case 'segundos':
+    case 'segundo': return num;
+    default: return 0;
+  }
+}
+
+// --- COMPONENTE DE CONTAGEM REGRESSIVA (SLA) ---
+function CountdownTimer({ dataEntrada, prazoStr }: { dataEntrada: string, prazoStr: string }) {
+  const [segundosRestantes, setSegundosRestantes] = useState<number | null>(null);
+  const [totalPrazoSegundos, setTotalPrazoSegundos] = useState(0);
 
   useEffect(() => {
-    const start = parseISO(dataInicio);
-    
-    // Função de atualização
-    const tick = () => setSegundos(differenceInSeconds(new Date(), start));
-    
-    tick(); // Primeira execução imediata
-    const interval = setInterval(tick, 1000); // Atualiza a cada segundo
+    const inicio = parseISO(dataEntrada);
+    const prazoSegundos = parsePrazoToSeconds(prazoStr);
+    setTotalPrazoSegundos(prazoSegundos);
 
+    if (prazoSegundos === 0) return; // Sem prazo definido
+
+    const limite = addSeconds(inicio, prazoSegundos);
+
+    const tick = () => {
+      const agora = new Date();
+      const diff = differenceInSeconds(limite, agora);
+      setSegundosRestantes(diff);
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [dataInicio]);
+  }, [dataEntrada, prazoStr]);
 
-  // Formatação HH:MM:SS
-  const horas = Math.floor(segundos / 3600);
-  const minutos = Math.floor((segundos % 3600) / 60);
-  const secs = segundos % 60;
+  if (totalPrazoSegundos === 0) {
+    return <Badge variant="outline" className="text-muted-foreground">Sem Prazo</Badge>;
+  }
+
+  if (segundosRestantes === null) return null;
+
+  // Lógica de Cores e Formatação
+  const isAtrasado = segundosRestantes < 0;
+  const absSegundos = Math.abs(segundosRestantes);
   
+  const dias = Math.floor(absSegundos / 86400);
+  const horas = Math.floor((absSegundos % 86400) / 3600);
+  const minutos = Math.floor((absSegundos % 3600) / 60);
+  const segundos = absSegundos % 60;
+
   const pad = (n: number) => n.toString().padStart(2, '0');
-  const tempoFormatado = `${pad(horas)}:${pad(minutos)}:${pad(secs)}`;
+  
+  // Formata string: "2d 04:30:15" ou "04:30:15"
+  let tempoTexto = `${pad(horas)}:${pad(minutos)}:${pad(segundos)}`;
+  if (dias > 0) tempoTexto = `${dias}d ${tempoTexto}`;
 
-  // Cálculo de cor baseado no prazo
-  let corTexto = "text-muted-foreground";
-  let iconeCor = "text-muted-foreground";
+  if (isAtrasado) {
+    return (
+      <div className="flex items-center gap-1.5 px-2 py-1 rounded border bg-red-100 border-red-200 text-red-700 dark:bg-red-900/30 dark:border-red-800 dark:text-red-400 font-bold animate-pulse">
+        <AlertTriangle className="h-3.5 w-3.5" />
+        <span>-{tempoTexto} (Atrasado)</span>
+      </div>
+    );
+  }
 
-  if (prazoHoras > 0) {
-    const horasDecorridas = segundos / 3600;
-    if (horasDecorridas > prazoHoras) {
-      corTexto = "text-red-600 font-bold animate-pulse"; // Atrasado
-      iconeCor = "text-red-600";
-    } else if (horasDecorridas > prazoHoras * 0.8) {
-      corTexto = "text-yellow-600 font-medium"; // Quase lá
-      iconeCor = "text-yellow-600";
-    } else {
-      corTexto = "text-green-600 font-medium"; // No prazo
-      iconeCor = "text-green-600";
-    }
+  // Define cores baseadas na % do tempo restante
+  const percentualRestante = (segundosRestantes / totalPrazoSegundos) * 100;
+  
+  let corClasses = "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800"; // Padrão Verde
+  
+  if (percentualRestante < 20) {
+    corClasses = "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800 font-bold"; // Laranja (< 20%)
+  } else if (percentualRestante < 50) {
+    corClasses = "bg-yellow-100 text-yellow-700 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-800"; // Amarelo (< 50%)
   }
 
   return (
-    <div className={`flex items-center gap-1.5 text-sm font-mono ${corTexto} bg-background/50 px-2 py-1 rounded border`}>
-      <TimerIcon className={`h-3.5 w-3.5 ${iconeCor}`} />
-      <span>{tempoFormatado}</span>
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded border font-mono text-sm ${corClasses}`}>
+      <TimerIcon className="h-3.5 w-3.5" />
+      <span>{tempoTexto}</span>
     </div>
   );
 }
 
 // --- PÁGINA PRINCIPAL ---
 export default function Processamento() {
-  const [amostras, setAmostras] = useState<Amostra[]>([]);
+  const [amostras, setAmostras] = useState<Amostra & { prazoTeste?: string }[]>([]); // Tipo estendido localmente
   const [loading, setLoading] = useState(true);
   const [processando, setProcessando] = useState<string | null>(null);
 
   useEffect(() => {
     fetchAmostrasEmAndamento();
     
-    // Subscrever a alterações no banco de dados para atualizar a tela automaticamente
     const canal = supabase
       .channel('mudancas-processamento')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'amostras' }, () => {
@@ -102,31 +147,29 @@ export default function Processamento() {
   async function fetchAmostrasEmAndamento() {
     try {
       setLoading(true);
+      // ATENÇÃO: Agora buscamos também o 'prazo' da tabela testes
       const { data, error } = await supabase
         .from('amostras')
-        .select(`*, testes ( nome )`)
-        .order('created_at', { ascending: true }); // FIFO
+        .select(`*, testes ( nome, prazo )`)
+        .order('created_at', { ascending: true });
 
       if (error) throw error;
 
-      const formatadas: Amostra[] = (data || []).map((a: any) => ({
+      const formatadas = (data || []).map((a: any) => ({
         id: a.id,
         codigoInterno: a.codigo_interno,
         paciente: a.paciente,
         testeSolicitado: a.testes?.nome || "N/A",
+        prazoTeste: a.testes?.prazo || "", // Pega o prazo do teste (ex: "5 dias")
         tipo: a.tipo as TipoProcessamento,
         dataEntrada: a.data_entrada,
         etapaAtual: a.etapa_atual,
         historico: []
       }));
 
-      // --- FILTRO CORRIGIDO ---
-      // Mantém na lista qualquer amostra cuja etapa atual seja MENOR que a última etapa possível.
-      // Isso inclui a etapa 0 (recém-criada).
-      const emAndamento = formatadas.filter(a => {
+      const emAndamento = formatadas.filter((a: any) => {
         const etapas = a.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
-        const ultimaEtapaIndex = etapas.length - 1;
-        return a.etapaAtual < ultimaEtapaIndex; 
+        return a.etapaAtual < etapas.length - 1; 
       });
 
       setAmostras(emAndamento);
@@ -139,27 +182,20 @@ export default function Processamento() {
 
   const handleMudarEtapa = async (amostra: Amostra, novaEtapaIndex: number) => {
     const etapas = amostra.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
-    
     if (novaEtapaIndex < 0 || novaEtapaIndex >= etapas.length) return;
 
     try {
       setProcessando(amostra.id);
-      
       const { error } = await supabase
         .from('amostras')
         .update({ etapa_atual: novaEtapaIndex })
         .eq('id', amostra.id);
 
       if (error) throw error;
-
-      const acao = novaEtapaIndex > amostra.etapaAtual ? "avançou" : "voltou";
-      toast.success(`Status atualizado: ${etapas[novaEtapaIndex].nome}`);
-      
-      // A atualização via Realtime fará o resto, mas podemos forçar o fetch para garantir
+      toast.success(`Amostra avançou para: ${etapas[novaEtapaIndex].nome}`);
       fetchAmostrasEmAndamento();
-
     } catch (error: any) {
-      toast.error("Erro ao alterar etapa: " + error.message);
+      toast.error("Erro: " + error.message);
     } finally {
       setProcessando(null);
     }
@@ -168,7 +204,7 @@ export default function Processamento() {
   const internos = amostras.filter(a => a.tipo === 'INTERNO');
   const externos = amostras.filter(a => a.tipo === 'EXTERNO');
 
-  const CardAmostraProcessamento = ({ item }: { item: Amostra }) => {
+  const CardAmostraProcessamento = ({ item }: { item: any }) => {
     const etapas = item.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
     const etapaAtualInfo = etapas[item.etapaAtual];
     
@@ -180,10 +216,10 @@ export default function Processamento() {
               <span className="font-bold text-lg">{item.codigoInterno}</span>
               <Badge variant="outline">{item.testeSolicitado}</Badge>
               
-              {/* CRONÓMETRO */}
-              <Cronometro 
-                dataInicio={item.dataEntrada} 
-                prazoHoras={etapaAtualInfo.prazoHoras} 
+              {/* CONTAGEM REGRESSIVA INTELIGENTE */}
+              <CountdownTimer 
+                dataEntrada={item.dataEntrada} 
+                prazoStr={item.prazoTeste} 
               />
             </div>
             
@@ -192,8 +228,8 @@ export default function Processamento() {
             </p>
             
             <div className="flex items-center gap-2 text-sm mt-2">
-              <Badge variant="secondary" className="px-2 py-1 bg-secondary text-secondary-foreground">
-                Etapa Atual: {etapaAtualInfo.nome}
+              <Badge variant="secondary" className="px-2 py-1">
+                Etapa: {etapaAtualInfo.nome}
               </Badge>
             </div>
           </div>
@@ -246,7 +282,7 @@ export default function Processamento() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Fila de Processamento</h1>
           <p className="text-muted-foreground">
-            Gestão operacional com cronómetro em tempo real.
+            Acompanhamento de prazos e fluxo operacional.
           </p>
         </div>
       </div>
@@ -263,7 +299,6 @@ export default function Processamento() {
               <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
                 <Clock className="h-12 w-12 mx-auto mb-3 opacity-20" />
                 <p>Nenhuma amostra interna pendente.</p>
-                <p className="text-xs mt-2">Certifique-se que o teste cadastrado é do tipo "Interno".</p>
               </div>
             ) : (
               internos.map(amostra => (
@@ -279,7 +314,6 @@ export default function Processamento() {
               <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
                 <Clock className="h-12 w-12 mx-auto mb-3 opacity-20" />
                 <p>Nenhuma amostra externa pendente.</p>
-                <p className="text-xs mt-2">Certifique-se que o teste cadastrado é do tipo "Externo".</p>
               </div>
             ) : (
               externos.map(amostra => (
