@@ -10,7 +10,6 @@ import {
   ChevronDown,
   RotateCcw,
   FastForward,
-  Clock,
   Timer as TimerIcon,
   AlertTriangle
 } from "lucide-react";
@@ -31,21 +30,23 @@ import { differenceInSeconds, parseISO, addSeconds } from "date-fns";
 function parsePrazoToSeconds(prazoStr: string): number {
   if (!prazoStr) return 0;
   
-  const [valor, unidade] = prazoStr.toLowerCase().split(' ');
-  const num = parseInt(valor);
+  const clean = prazoStr.toLowerCase().trim();
+  const parts = clean.split(' ');
+  const valor = parseInt(parts[0]);
   
-  if (isNaN(num)) return 0;
+  if (isNaN(valor)) return 0;
 
-  switch (unidade) {
-    case 'dias':
-    case 'dia': return num * 86400;
-    case 'horas':
-    case 'hora': return num * 3600;
-    case 'minutos':
-    case 'minuto': return num * 60;
-    case 'segundos':
-    case 'segundo': return num;
-    default: return 0;
+  if (parts.length < 2) return valor * 3600;
+
+  const unidade = parts[1];
+  const u = unidade.endsWith('s') ? unidade.slice(0, -1) : unidade;
+
+  switch (u) {
+    case 'dia': return valor * 86400;
+    case 'hora': return valor * 3600;
+    case 'minuto': return valor * 60;
+    case 'segundo': return valor;
+    default: return valor * 3600;
   }
 }
 
@@ -59,7 +60,7 @@ function CountdownTimer({ dataEntrada, prazoStr }: { dataEntrada: string, prazoS
     const prazoSegundos = parsePrazoToSeconds(prazoStr);
     setTotalPrazoSegundos(prazoSegundos);
 
-    if (prazoSegundos === 0) return; // Sem prazo definido
+    if (prazoSegundos === 0) return;
 
     const limite = addSeconds(inicio, prazoSegundos);
 
@@ -80,7 +81,6 @@ function CountdownTimer({ dataEntrada, prazoStr }: { dataEntrada: string, prazoS
 
   if (segundosRestantes === null) return null;
 
-  // Lógica de Cores e Formatação
   const isAtrasado = segundosRestantes < 0;
   const absSegundos = Math.abs(segundosRestantes);
   
@@ -91,7 +91,6 @@ function CountdownTimer({ dataEntrada, prazoStr }: { dataEntrada: string, prazoS
 
   const pad = (n: number) => n.toString().padStart(2, '0');
   
-  // Formata string: "2d 04:30:15" ou "04:30:15"
   let tempoTexto = `${pad(horas)}:${pad(minutos)}:${pad(segundos)}`;
   if (dias > 0) tempoTexto = `${dias}d ${tempoTexto}`;
 
@@ -104,15 +103,14 @@ function CountdownTimer({ dataEntrada, prazoStr }: { dataEntrada: string, prazoS
     );
   }
 
-  // Define cores baseadas na % do tempo restante
   const percentualRestante = (segundosRestantes / totalPrazoSegundos) * 100;
   
-  let corClasses = "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800"; // Padrão Verde
+  let corClasses = "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800"; 
   
   if (percentualRestante < 20) {
-    corClasses = "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800 font-bold"; // Laranja (< 20%)
+    corClasses = "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800 font-bold";
   } else if (percentualRestante < 50) {
-    corClasses = "bg-yellow-100 text-yellow-700 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-800"; // Amarelo (< 50%)
+    corClasses = "bg-yellow-100 text-yellow-700 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-800";
   }
 
   return (
@@ -125,7 +123,9 @@ function CountdownTimer({ dataEntrada, prazoStr }: { dataEntrada: string, prazoS
 
 // --- PÁGINA PRINCIPAL ---
 export default function Processamento() {
-  const [amostras, setAmostras] = useState<Amostra & { prazoTeste?: string }[]>([]); // Tipo estendido localmente
+  // AQUI ESTAVA O ERRO: Adicionei parênteses para agrupar o tipo corretamente
+  const [amostras, setAmostras] = useState<(Amostra & { prazoTeste?: string })[]>([]); 
+  
   const [loading, setLoading] = useState(true);
   const [processando, setProcessando] = useState<string | null>(null);
 
@@ -147,7 +147,6 @@ export default function Processamento() {
   async function fetchAmostrasEmAndamento() {
     try {
       setLoading(true);
-      // ATENÇÃO: Agora buscamos também o 'prazo' da tabela testes
       const { data, error } = await supabase
         .from('amostras')
         .select(`*, testes ( nome, prazo )`)
@@ -160,7 +159,7 @@ export default function Processamento() {
         codigoInterno: a.codigo_interno,
         paciente: a.paciente,
         testeSolicitado: a.testes?.nome || "N/A",
-        prazoTeste: a.testes?.prazo || "", // Pega o prazo do teste (ex: "5 dias")
+        prazoTeste: a.testes?.prazo || "", 
         tipo: a.tipo as TipoProcessamento,
         dataEntrada: a.data_entrada,
         etapaAtual: a.etapa_atual,
@@ -216,7 +215,6 @@ export default function Processamento() {
               <span className="font-bold text-lg">{item.codigoInterno}</span>
               <Badge variant="outline">{item.testeSolicitado}</Badge>
               
-              {/* CONTAGEM REGRESSIVA INTELIGENTE */}
               <CountdownTimer 
                 dataEntrada={item.dataEntrada} 
                 prazoStr={item.prazoTeste} 
@@ -297,7 +295,7 @@ export default function Processamento() {
           <ScrollArea className="h-full pr-4">
             {internos.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
-                <Clock className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                <TimerIcon className="h-12 w-12 mx-auto mb-3 opacity-20" />
                 <p>Nenhuma amostra interna pendente.</p>
               </div>
             ) : (
@@ -312,7 +310,7 @@ export default function Processamento() {
           <ScrollArea className="h-full pr-4">
             {externos.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
-                <Clock className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                <TimerIcon className="h-12 w-12 mx-auto mb-3 opacity-20" />
                 <p>Nenhuma amostra externa pendente.</p>
               </div>
             ) : (
