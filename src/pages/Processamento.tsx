@@ -52,8 +52,6 @@ function Cronometro({ dataInicio, prazoHoras }: { dataInicio: string, prazoHoras
   const tempoFormatado = `${pad(horas)}:${pad(minutos)}:${pad(secs)}`;
 
   // Cálculo de cor baseado no prazo
-  // Se prazoHoras for 0, não tem prazo (fica cinza/azul)
-  // Se passar do prazo, fica vermelho. Se estiver perto (80%), fica amarelo.
   let corTexto = "text-muted-foreground";
   let iconeCor = "text-muted-foreground";
 
@@ -88,6 +86,7 @@ export default function Processamento() {
   useEffect(() => {
     fetchAmostrasEmAndamento();
     
+    // Subscrever a alterações no banco de dados para atualizar a tela automaticamente
     const canal = supabase
       .channel('mudancas-processamento')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'amostras' }, () => {
@@ -100,45 +99,43 @@ export default function Processamento() {
     };
   }, []);
 
-async function fetchAmostrasEmAndamento() {
-  try {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('amostras')
-      .select(`*, testes ( nome )`)
-      .order('created_at', { ascending: true });
+  async function fetchAmostrasEmAndamento() {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('amostras')
+        .select(`*, testes ( nome )`)
+        .order('created_at', { ascending: true }); // FIFO
 
-    if (error) throw error;
+      if (error) throw error;
 
-    const formatadas: Amostra[] = (data || []).map((a: any) => ({
-      id: a.id,
-      codigoInterno: a.codigo_interno,
-      paciente: a.paciente,
-      testeSolicitado: a.testes?.nome || "N/A",
-      tipo: a.tipo as TipoProcessamento,
-      dataEntrada: a.data_entrada,
-      etapaAtual: a.etapa_atual,
-      historico: []
-    }));
+      const formatadas: Amostra[] = (data || []).map((a: any) => ({
+        id: a.id,
+        codigoInterno: a.codigo_interno,
+        paciente: a.paciente,
+        testeSolicitado: a.testes?.nome || "N/A",
+        tipo: a.tipo as TipoProcessamento,
+        dataEntrada: a.data_entrada,
+        etapaAtual: a.etapa_atual,
+        historico: []
+      }));
 
-    // --- CORREÇÃO DO FILTRO ---
-    // Antes podia estar a ocultar a etapa 0. Agora garantimos que mostra tudo
-    // exceto o que já foi estritamente "Concluído" (última etapa).
-    const emAndamento = formatadas.filter(a => {
-      const etapas = a.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
-      const ultimaEtapaIndex = etapas.length - 1;
-      
-      // Mostra se a etapa atual for MENOR que a última etapa
-      return a.etapaAtual < ultimaEtapaIndex; 
-    });
+      // --- FILTRO CORRIGIDO ---
+      // Mantém na lista qualquer amostra cuja etapa atual seja MENOR que a última etapa possível.
+      // Isso inclui a etapa 0 (recém-criada).
+      const emAndamento = formatadas.filter(a => {
+        const etapas = a.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
+        const ultimaEtapaIndex = etapas.length - 1;
+        return a.etapaAtual < ultimaEtapaIndex; 
+      });
 
-    setAmostras(emAndamento);
-  } catch (error: any) {
-    toast.error("Erro ao carregar fila: " + error.message);
-  } finally {
-    setLoading(false);
+      setAmostras(emAndamento);
+    } catch (error: any) {
+      toast.error("Erro ao carregar fila: " + error.message);
+    } finally {
+      setLoading(false);
+    }
   }
-}
 
   const handleMudarEtapa = async (amostra: Amostra, novaEtapaIndex: number) => {
     const etapas = amostra.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
@@ -157,6 +154,8 @@ async function fetchAmostrasEmAndamento() {
 
       const acao = novaEtapaIndex > amostra.etapaAtual ? "avançou" : "voltou";
       toast.success(`Status atualizado: ${etapas[novaEtapaIndex].nome}`);
+      
+      // A atualização via Realtime fará o resto, mas podemos forçar o fetch para garantir
       fetchAmostrasEmAndamento();
 
     } catch (error: any) {
@@ -173,7 +172,6 @@ async function fetchAmostrasEmAndamento() {
     const etapas = item.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
     const etapaAtualInfo = etapas[item.etapaAtual];
     
-    // Usamos o cronómetro para mostrar o tempo total
     return (
       <Card className="mb-4 border-l-4 border-l-primary hover:shadow-md transition-shadow">
         <CardContent className="p-4 flex items-center justify-between">
@@ -182,7 +180,7 @@ async function fetchAmostrasEmAndamento() {
               <span className="font-bold text-lg">{item.codigoInterno}</span>
               <Badge variant="outline">{item.testeSolicitado}</Badge>
               
-              {/* O CRONÓMETRO APARECE AQUI */}
+              {/* CRONÓMETRO */}
               <Cronometro 
                 dataInicio={item.dataEntrada} 
                 prazoHoras={etapaAtualInfo.prazoHoras} 
@@ -265,6 +263,7 @@ async function fetchAmostrasEmAndamento() {
               <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
                 <Clock className="h-12 w-12 mx-auto mb-3 opacity-20" />
                 <p>Nenhuma amostra interna pendente.</p>
+                <p className="text-xs mt-2">Certifique-se que o teste cadastrado é do tipo "Interno".</p>
               </div>
             ) : (
               internos.map(amostra => (
@@ -280,6 +279,7 @@ async function fetchAmostrasEmAndamento() {
               <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
                 <Clock className="h-12 w-12 mx-auto mb-3 opacity-20" />
                 <p>Nenhuma amostra externa pendente.</p>
+                <p className="text-xs mt-2">Certifique-se que o teste cadastrado é do tipo "Externo".</p>
               </div>
             ) : (
               externos.map(amostra => (
