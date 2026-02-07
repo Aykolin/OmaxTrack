@@ -100,39 +100,45 @@ export default function Processamento() {
     };
   }, []);
 
-  async function fetchAmostrasEmAndamento() {
-    try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('amostras')
-        .select(`*, testes ( nome )`)
-        .order('created_at', { ascending: true });
+async function fetchAmostrasEmAndamento() {
+  try {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('amostras')
+      .select(`*, testes ( nome )`)
+      .order('created_at', { ascending: true });
 
-      if (error) throw error;
+    if (error) throw error;
 
-      const formatadas: Amostra[] = (data || []).map((a: any) => ({
-        id: a.id,
-        codigoInterno: a.codigo_interno,
-        paciente: a.paciente,
-        testeSolicitado: a.testes?.nome || "N/A",
-        tipo: a.tipo as TipoProcessamento,
-        dataEntrada: a.data_entrada,
-        etapaAtual: a.etapa_atual,
-        historico: []
-      }));
+    const formatadas: Amostra[] = (data || []).map((a: any) => ({
+      id: a.id,
+      codigoInterno: a.codigo_interno,
+      paciente: a.paciente,
+      testeSolicitado: a.testes?.nome || "N/A",
+      tipo: a.tipo as TipoProcessamento,
+      dataEntrada: a.data_entrada,
+      etapaAtual: a.etapa_atual,
+      historico: []
+    }));
 
-      const emAndamento = formatadas.filter(a => {
-        const totalEtapas = a.tipo === 'INTERNO' ? ETAPAS_INTERNAS.length : ETAPAS_EXTERNAS.length;
-        return a.etapaAtual < totalEtapas - 1; 
-      });
+    // --- CORREÇÃO DO FILTRO ---
+    // Antes podia estar a ocultar a etapa 0. Agora garantimos que mostra tudo
+    // exceto o que já foi estritamente "Concluído" (última etapa).
+    const emAndamento = formatadas.filter(a => {
+      const etapas = a.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
+      const ultimaEtapaIndex = etapas.length - 1;
+      
+      // Mostra se a etapa atual for MENOR que a última etapa
+      return a.etapaAtual < ultimaEtapaIndex; 
+    });
 
-      setAmostras(emAndamento);
-    } catch (error: any) {
-      toast.error("Erro ao carregar fila: " + error.message);
-    } finally {
-      setLoading(false);
-    }
+    setAmostras(emAndamento);
+  } catch (error: any) {
+    toast.error("Erro ao carregar fila: " + error.message);
+  } finally {
+    setLoading(false);
   }
+}
 
   const handleMudarEtapa = async (amostra: Amostra, novaEtapaIndex: number) => {
     const etapas = amostra.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
