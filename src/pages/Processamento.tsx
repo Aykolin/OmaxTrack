@@ -8,14 +8,11 @@ import {
   ArrowRight, 
   CheckCircle2, 
   AlertTriangle, 
-  Play, 
-  Box, 
-  TestTube2, 
-  FileText, 
-  UserCheck, 
   ChevronDown,
   RotateCcw,
-  FastForward
+  FastForward,
+  Clock,
+  Timer as TimerIcon
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -28,8 +25,61 @@ import {
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { Amostra, ETAPAS_INTERNAS, ETAPAS_EXTERNAS, TipoProcessamento } from "@/types";
-import { differenceInHours, parseISO } from "date-fns";
+import { differenceInSeconds, parseISO } from "date-fns";
 
+// --- COMPONENTE DE CRONÓMETRO ---
+function Cronometro({ dataInicio, prazoHoras }: { dataInicio: string, prazoHoras: number }) {
+  const [segundos, setSegundos] = useState(0);
+
+  useEffect(() => {
+    const start = parseISO(dataInicio);
+    
+    // Função de atualização
+    const tick = () => setSegundos(differenceInSeconds(new Date(), start));
+    
+    tick(); // Primeira execução imediata
+    const interval = setInterval(tick, 1000); // Atualiza a cada segundo
+
+    return () => clearInterval(interval);
+  }, [dataInicio]);
+
+  // Formatação HH:MM:SS
+  const horas = Math.floor(segundos / 3600);
+  const minutos = Math.floor((segundos % 3600) / 60);
+  const secs = segundos % 60;
+  
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const tempoFormatado = `${pad(horas)}:${pad(minutos)}:${pad(secs)}`;
+
+  // Cálculo de cor baseado no prazo
+  // Se prazoHoras for 0, não tem prazo (fica cinza/azul)
+  // Se passar do prazo, fica vermelho. Se estiver perto (80%), fica amarelo.
+  let corTexto = "text-muted-foreground";
+  let iconeCor = "text-muted-foreground";
+
+  if (prazoHoras > 0) {
+    const horasDecorridas = segundos / 3600;
+    if (horasDecorridas > prazoHoras) {
+      corTexto = "text-red-600 font-bold animate-pulse"; // Atrasado
+      iconeCor = "text-red-600";
+    } else if (horasDecorridas > prazoHoras * 0.8) {
+      corTexto = "text-yellow-600 font-medium"; // Quase lá
+      iconeCor = "text-yellow-600";
+    } else {
+      corTexto = "text-green-600 font-medium"; // No prazo
+      iconeCor = "text-green-600";
+    }
+  }
+
+  return (
+    <div className={`flex items-center gap-1.5 text-sm font-mono ${corTexto} bg-background/50 px-2 py-1 rounded border`}>
+      <TimerIcon className={`h-3.5 w-3.5 ${iconeCor}`} />
+      <span>{tempoFormatado}</span>
+    </div>
+  );
+}
+
+// --- PÁGINA PRINCIPAL ---
 export default function Processamento() {
   const [amostras, setAmostras] = useState<Amostra[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,7 +89,7 @@ export default function Processamento() {
     fetchAmostrasEmAndamento();
     
     const canal = supabase
-      .channel('mudancas-amostras')
+      .channel('mudancas-processamento')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'amostras' }, () => {
         fetchAmostrasEmAndamento();
       })
@@ -71,8 +121,6 @@ export default function Processamento() {
         historico: []
       }));
 
-      // Filtra visualmente as concluídas se necessário, ou mostra todas
-      // Aqui mostramos todas que não estão na última etapa absoluta
       const emAndamento = formatadas.filter(a => {
         const totalEtapas = a.tipo === 'INTERNO' ? ETAPAS_INTERNAS.length : ETAPAS_EXTERNAS.length;
         return a.etapaAtual < totalEtapas - 1; 
@@ -86,7 +134,6 @@ export default function Processamento() {
     }
   }
 
-  // Função Genérica para Mudar Etapa (Avançar ou Voltar)
   const handleMudarEtapa = async (amostra: Amostra, novaEtapaIndex: number) => {
     const etapas = amostra.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
     
@@ -103,8 +150,7 @@ export default function Processamento() {
       if (error) throw error;
 
       const acao = novaEtapaIndex > amostra.etapaAtual ? "avançou" : "voltou";
-      toast.success(`Amostra ${amostra.codigoInterno} ${acao} para: ${etapas[novaEtapaIndex].nome}`);
-      
+      toast.success(`Status atualizado: ${etapas[novaEtapaIndex].nome}`);
       fetchAmostrasEmAndamento();
 
     } catch (error: any) {
@@ -121,61 +167,58 @@ export default function Processamento() {
     const etapas = item.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
     const etapaAtualInfo = etapas[item.etapaAtual];
     
-    // Cálculo de atraso
-    const horasDesdeEntrada = differenceInHours(new Date(), parseISO(item.dataEntrada));
-    const estaAtrasado = etapaAtualInfo.prazoHoras > 0 && horasDesdeEntrada > etapaAtualInfo.prazoHoras;
-
+    // Usamos o cronómetro para mostrar o tempo total
     return (
-      <Card className={`mb-4 border-l-4 ${estaAtrasado ? 'border-l-red-500' : 'border-l-blue-500'}`}>
+      <Card className="mb-4 border-l-4 border-l-primary hover:shadow-md transition-shadow">
         <CardContent className="p-4 flex items-center justify-between">
           <div className="space-y-1">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <span className="font-bold text-lg">{item.codigoInterno}</span>
               <Badge variant="outline">{item.testeSolicitado}</Badge>
-              {estaAtrasado && (
-                <Badge variant="destructive" className="flex items-center gap-1">
-                  <AlertTriangle className="h-3 w-3" /> Atraso
-                </Badge>
-              )}
+              
+              {/* O CRONÓMETRO APARECE AQUI */}
+              <Cronometro 
+                dataInicio={item.dataEntrada} 
+                prazoHoras={etapaAtualInfo.prazoHoras} 
+              />
             </div>
+            
             <p className="text-sm text-muted-foreground">
               Paciente: <span className="font-medium text-foreground">{item.paciente}</span>
             </p>
+            
             <div className="flex items-center gap-2 text-sm mt-2">
-              <Badge variant="secondary" className="px-2 py-1 bg-primary/10 text-primary hover:bg-primary/20">
-                {etapaAtualInfo.nome}
+              <Badge variant="secondary" className="px-2 py-1 bg-secondary text-secondary-foreground">
+                Etapa Atual: {etapaAtualInfo.nome}
               </Badge>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Botão Principal: Avançar 1 Etapa */}
             <Button 
               onClick={() => handleMudarEtapa(item, item.etapaAtual + 1)} 
               disabled={!!processando}
               className={processando === item.id ? "opacity-50 cursor-not-allowed" : ""}
             >
-              {processando === item.id ? "Salvando..." : "Próxima Etapa"}
+              {processando === item.id ? "..." : "Próxima Etapa"}
               <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
 
-            {/* Menu Dropdown: Controle Fino (Voltar/Saltar) */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="icon">
                   <ChevronDown className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuContent align="end" className="w-64 max-h-[300px] overflow-y-auto">
                 <DropdownMenuLabel>Mover para Etapa:</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                
                 {etapas.map((etapa, index) => (
                   <DropdownMenuItem 
                     key={etapa.id}
                     onClick={() => handleMudarEtapa(item, index)}
                     disabled={index === item.etapaAtual}
-                    className="flex justify-between items-center cursor-pointer"
+                    className="flex justify-between items-center cursor-pointer py-2"
                   >
                     <span className={index === item.etapaAtual ? "font-bold text-primary" : ""}>
                       {index + 1}. {etapa.nome}
@@ -199,7 +242,7 @@ export default function Processamento() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Fila de Processamento</h1>
           <p className="text-muted-foreground">
-            Gestão operacional e avanço de etapas das amostras.
+            Gestão operacional com cronómetro em tempo real.
           </p>
         </div>
       </div>
@@ -214,7 +257,7 @@ export default function Processamento() {
           <ScrollArea className="h-full pr-4">
             {internos.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
-                <CheckCircle2 className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                <Clock className="h-12 w-12 mx-auto mb-3 opacity-20" />
                 <p>Nenhuma amostra interna pendente.</p>
               </div>
             ) : (
@@ -229,7 +272,7 @@ export default function Processamento() {
           <ScrollArea className="h-full pr-4">
             {externos.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
-                <CheckCircle2 className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                <Clock className="h-12 w-12 mx-auto mb-3 opacity-20" />
                 <p>Nenhuma amostra externa pendente.</p>
               </div>
             ) : (
