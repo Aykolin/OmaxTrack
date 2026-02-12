@@ -8,7 +8,7 @@
   "author": "OmaxTrack Team",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SEU-USUARIO-GITHUB/NOME-DO-REPO.git"
+    "url": "https://github.com/Aykolin/OmaxTrack.git"
   },
   "scripts": {
     "dev": "vite",
@@ -22,8 +22,8 @@
     "productName": "OmaxTrack",
     "publish": [
       {
-        "provider": "github",
-        "url": "https://omaxtrack-dist.onrender.com"
+        "provider": "generic",
+        "url": "https://omaxtrack-dist.onrender.com/"
       }
     ],
     "directories": {
