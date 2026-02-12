@@ -35,10 +35,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Search, MoreHorizontal, CheckCircle, Trash2, CalendarClock, Loader2, Archive, Activity } from "lucide-react";
+import { Plus, Search, MoreHorizontal, CheckCircle, Trash2, CalendarClock, Loader2, Archive, Activity, Clock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
-import { TipoProcessamento } from "@/types";
+import { TipoProcessamento, ETAPAS_INTERNAS, ETAPAS_EXTERNAS } from "@/types";
 
 interface Teste {
   id: string;
@@ -48,6 +48,7 @@ interface Teste {
   tipo: TipoProcessamento;
   metodo: string;
   prazo: string;
+  prazos_etapas?: Record<string, number>; // Salvo em SEGUNDOS
   status: "ativo" | "inativo"; 
 }
 
@@ -55,6 +56,15 @@ const statusLabels = {
   ativo: { label: "Ativo", variant: "default" as const, icon: CheckCircle, className: "bg-green-600 hover:bg-green-700" },
   inativo: { label: "Inativo", variant: "secondary" as const, icon: Archive, className: "text-muted-foreground" },
   pendente: { label: "Pendente (Ativar)", variant: "outline" as const, icon: Activity, className: "text-yellow-600 border-yellow-600" },
+};
+
+// Formata segundos para exibição compacta na tabela (ex: 2h, 30m)
+const formatarSegundos = (segundos: number) => {
+    if (!segundos) return "-";
+    if (segundos >= 86400) return `${(segundos / 86400).toFixed(1).replace('.0', '')}d`;
+    if (segundos >= 3600) return `${(segundos / 3600).toFixed(1).replace('.0', '')}h`;
+    if (segundos >= 60) return `${(segundos / 60).toFixed(0)}m`;
+    return `${segundos}s`;
 };
 
 export default function Testes() {
@@ -75,6 +85,9 @@ export default function Testes() {
 
   const [prazoValor, setPrazoValor] = useState("");
   const [prazoUnidade, setPrazoUnidade] = useState("dias");
+  
+  // Estado alterado para suportar valor E unidade por etapa
+  const [configEtapas, setConfigEtapas] = useState<Record<string, { valor: string, unidade: string }>>({});
 
   useEffect(() => {
     fetchTestes();
@@ -97,6 +110,17 @@ export default function Testes() {
     }
   }
 
+  // Função para atualizar o estado composto de cada etapa
+  const updateEtapaConfig = (index: number, field: 'valor' | 'unidade', value: string) => {
+      setConfigEtapas(prev => ({
+          ...prev,
+          [index]: {
+              valor: field === 'valor' ? value : (prev[index]?.valor || ""),
+              unidade: field === 'unidade' ? value : (prev[index]?.unidade || "minutos")
+          }
+      }));
+  };
+
   const handleAdicionar = async () => {
     if (!novoTeste.codigo || !novoTeste.nome || !novoTeste.tipo || !prazoValor) {
       toast.warning("Preencha os campos obrigatórios.");
@@ -105,6 +129,25 @@ export default function Testes() {
 
     const prazoFinal = `${prazoValor} ${prazoUnidade}`;
     
+    // Converter a configuração (Valor + Unidade) para Segundos Totais
+    const prazosEtapasSegundos: Record<string, number> = {};
+    
+    Object.keys(configEtapas).forEach(key => {
+        const { valor, unidade } = configEtapas[key];
+        const val = parseInt(valor);
+        
+        if (!isNaN(val) && val > 0) {
+            let multiplicador = 1;
+            switch(unidade) {
+                case 'dias': multiplicador = 86400; break;
+                case 'horas': multiplicador = 3600; break;
+                case 'minutos': multiplicador = 60; break;
+                case 'segundos': multiplicador = 1; break;
+            }
+            prazosEtapasSegundos[key] = val * multiplicador;
+        }
+    });
+
     try {
       setSaving(true);
       const { data, error } = await supabase
@@ -117,6 +160,7 @@ export default function Testes() {
             tipo: novoTeste.tipo,
             metodo: novoTeste.metodo || "-",
             prazo: prazoFinal,
+            prazos_etapas: prazosEtapasSegundos, // Salva em segundos no banco
             status: 'ativo'
           }
         ])
@@ -131,6 +175,7 @@ export default function Testes() {
         setNovoTeste({ codigo: "", nome: "", amostra: "", tipo: "INTERNO", metodo: "" });
         setPrazoValor("");
         setPrazoUnidade("dias");
+        setConfigEtapas({}); // Limpa config
         setDialogOpen(false);
       }
     } catch (error: any) {
@@ -140,7 +185,6 @@ export default function Testes() {
     }
   };
 
-  // --- FUNÇÃO DE EXCLUSÃO ATUALIZADA ---
   const handleExcluir = async (id: string) => {
     if (!confirm("Tem certeza? Esta ação é irreversível.")) return;
     
@@ -148,12 +192,10 @@ export default function Testes() {
       const { error } = await supabase.from('testes').delete().eq('id', id);
       
       if (error) {
-        // Tratamento específico para erro de chave estrangeira (FK)
-        // Código 23503 = foreign_key_violation
         if (error.code === '23503') {
-           toast.error("Ação bloqueada: Existem amostras vinculadas a este teste. Exclua as amostras primeiro ou inative o teste.");
+           toast.error("Ação bloqueada: Existem amostras vinculadas a este teste.");
         } else {
-           throw error; // Lança outros erros normalmente
+           throw error;
         }
         return;
       }
@@ -193,6 +235,8 @@ export default function Testes() {
   const testesInternos = testesFiltrados.filter(t => t.tipo === "INTERNO");
   const testesExternos = testesFiltrados.filter(t => t.tipo === "EXTERNO");
 
+  const etapasAtuais = novoTeste.tipo === 'INTERNO' ? ETAPAS_INTERNAS : ETAPAS_EXTERNAS;
+
   const TesteTable = ({ data }: { data: Teste[] }) => (
     <Table>
       <TableHeader>
@@ -200,7 +244,8 @@ export default function Testes() {
           <TableHead>Teste</TableHead>
           <TableHead>Amostra</TableHead>
           <TableHead>Método</TableHead>
-          <TableHead>Prazo</TableHead>
+          <TableHead>Prazo Total</TableHead>
+          <TableHead>SLA Etapas</TableHead>
           <TableHead>Status</TableHead>
           <TableHead className="text-right">Ações</TableHead>
         </TableRow>
@@ -208,7 +253,7 @@ export default function Testes() {
       <TableBody>
         {data.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+            <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
               {loading ? <Loader2 className="h-6 w-6 animate-spin mx-auto" /> : "Nenhum teste encontrado."}
             </TableCell>
           </TableRow>
@@ -216,6 +261,7 @@ export default function Testes() {
           data.map((teste) => {
             const statusConfig = statusLabels[teste.status] || statusLabels.pendente;
             const Icon = statusConfig.icon;
+            const temEtapasConfiguradas = teste.prazos_etapas && Object.keys(teste.prazos_etapas).length > 0;
 
             return (
               <TableRow key={teste.id} className={teste.status === 'inativo' ? 'opacity-60 bg-muted/50' : ''}>
@@ -232,6 +278,19 @@ export default function Testes() {
                     <CalendarClock className="h-3 w-3" />
                     {teste.prazo}
                   </div>
+                </TableCell>
+                <TableCell>
+                   {temEtapasConfiguradas ? (
+                       <div className="flex flex-wrap gap-1">
+                           {Object.entries(teste.prazos_etapas || {}).map(([etapaIdx, segundos]) => (
+                               <Badge key={etapaIdx} variant="secondary" className="text-[10px] px-1 h-5 whitespace-nowrap">
+                                   E{parseInt(etapaIdx) + 1}: {formatarSegundos(segundos)}
+                               </Badge>
+                           ))}
+                       </div>
+                   ) : (
+                       <span className="text-muted-foreground text-xs">-</span>
+                   )}
                 </TableCell>
                 <TableCell>
                   <Badge className={`gap-1 ${statusConfig.className}`} variant={statusConfig.variant}>
@@ -299,7 +358,7 @@ export default function Testes() {
               Novo Teste
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[500px]">
+          <DialogContent className="sm:max-w-[700px] max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Cadastrar Novo Teste</DialogTitle>
               <DialogDescription>
@@ -343,7 +402,10 @@ export default function Testes() {
                   <Label htmlFor="tipo">Processamento</Label>
                   <Select 
                     value={novoTeste.tipo}
-                    onValueChange={(value: "INTERNO" | "EXTERNO") => setNovoTeste({ ...novoTeste, tipo: value })}
+                    onValueChange={(value: "INTERNO" | "EXTERNO") => {
+                        setNovoTeste({ ...novoTeste, tipo: value });
+                        setConfigEtapas({});
+                    }}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Selecione" />
@@ -356,7 +418,7 @@ export default function Testes() {
                 </div>
 
                 <div className="grid gap-2">
-                  <Label htmlFor="prazo">Prazo Resultado</Label>
+                  <Label htmlFor="prazo">Prazo Total (SLA)</Label>
                   <div className="flex gap-2">
                     <Input
                       id="prazo"
@@ -378,11 +440,52 @@ export default function Testes() {
                         <SelectItem value="dias">Dias</SelectItem>
                         <SelectItem value="horas">Horas</SelectItem>
                         <SelectItem value="minutos">Minutos</SelectItem>
-                        <SelectItem value="segundos">Segundos</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
+              </div>
+
+              {/* SECÇÃO ATUALIZADA: CONFIGURAÇÃO DE TEMPO POR ETAPA */}
+              <div className="space-y-3 pt-2 pb-2 border rounded-md p-3 bg-slate-50 dark:bg-slate-900/50">
+                  <div className="flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-orange-500" />
+                      <Label className="font-semibold text-orange-700 dark:text-orange-400">Metas por Etapa</Label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                      {etapasAtuais.map((etapa, index) => (
+                          <div key={etapa.id} className="grid gap-1">
+                              <Label htmlFor={`etapa-${index}`} className="text-xs text-muted-foreground truncate">
+                                  {etapa.nome}
+                              </Label>
+                              <div className="flex gap-1">
+                                  <Input 
+                                    id={`etapa-${index}`}
+                                    type="number" 
+                                    placeholder="Valor" 
+                                    className="h-8 bg-white dark:bg-slate-950"
+                                    value={configEtapas[index]?.valor || ""}
+                                    onChange={(e) => updateEtapaConfig(index, 'valor', e.target.value)}
+                                  />
+                                  <Select 
+                                    value={configEtapas[index]?.unidade || "minutos"} 
+                                    onValueChange={(val) => updateEtapaConfig(index, 'unidade', val)}
+                                  >
+                                      <SelectTrigger className="h-8 w-[95px] px-2 text-xs">
+                                          <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                          <SelectItem value="dias">Dia</SelectItem>
+                                          <SelectItem value="horas">Hora</SelectItem>
+                                          <SelectItem value="minutos">Min</SelectItem>
+                                          <SelectItem value="segundos">Seg</SelectItem>
+                                      </SelectContent>
+                                  </Select>
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">* Deixe em branco se não houver tempo limite específico.</p>
               </div>
 
               <div className="grid gap-2">

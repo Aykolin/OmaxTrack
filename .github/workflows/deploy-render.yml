@@ -1,0 +1,39 @@
+name: Build & Deploy to Render
+
+on:
+  push:
+    tags:
+      - 'v*' # Dispara quando criares uma tag v1.0.1, v1.0.2...
+
+jobs:
+  build-and-deploy:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build Electron App
+        # Gera o .exe e o latest.yml mas NÃO publica no GitHub Releases (-p never)
+        run: npm run electron:build -- -p never
+
+      - name: Deploy to Distribution Repo
+        # Pega nos ficheiros gerados e envia para o repo do Render
+        uses: cpina/github-action-push-to-another-repository@main
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.GH_TOKEN_CUSTOM }}
+        with:
+          source-directory: 'dist-electron'
+          destination-github-username: 'SEU-USUARIO-GITHUB' # <--- COLOCA O TEU USER
+          destination-repository-name: 'omaxtrack-dist'     # <--- O NOME DO REPO DE DISTRIBUIÇÃO
+          user-email: seu-email@exemplo.com                 # <--- TEU EMAIL
+          target-branch: main
+          target-directory: '.'
